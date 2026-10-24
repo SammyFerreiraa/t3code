@@ -10,7 +10,13 @@ export type DiffPanelSelection =
   | { kind: "unstaged"; filePath?: string | null; revealRequestId?: number }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number }
   // Not persisted: reopening the app should not land on a commit picked in an earlier session.
-  | { kind: "commit"; sha: string; filePath: string; revealRequestId: number };
+  | {
+      kind: "commit";
+      sha: string;
+      filePath: string;
+      previousPath: string | null;
+      revealRequestId: number;
+    };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -21,7 +27,12 @@ interface DiffPanelStoreState {
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   selectWorkingTreeFile: (ref: ScopedThreadRef, filePath: string) => void;
-  selectCommitFile: (ref: ScopedThreadRef, sha: string, filePath: string) => void;
+  selectCommitFile: (
+    ref: ScopedThreadRef,
+    sha: string,
+    filePath: string,
+    previousPath?: string | null,
+  ) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -105,7 +116,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
-      selectCommitFile: (ref, sha, filePath) =>
+      selectCommitFile: (ref, sha, filePath, previousPath = null) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
@@ -116,6 +127,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
                 kind: "commit",
                 sha,
                 filePath,
+                previousPath,
                 revealRequestId: previous?.kind === "commit" ? previous.revealRequestId + 1 : 1,
               },
             },

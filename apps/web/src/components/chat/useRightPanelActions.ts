@@ -291,13 +291,19 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
   // With a commit hash the file opens that commit's diff instead of the working tree's.
-  const onOpenWorkingTreeFileDiff = (filePath: string, commitSha?: string) => {
+  const onOpenWorkingTreeFileDiff = (
+    filePath: string,
+    commitSha?: string,
+    previousPath?: string | null,
+  ) => {
     if (!isServerThread || !activeThreadRef) return;
     const diffOpen =
       selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
     explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
     if (commitSha) {
-      useDiffPanelStore.getState().selectCommitFile(activeThreadRef, commitSha, filePath);
+      useDiffPanelStore
+        .getState()
+        .selectCommitFile(activeThreadRef, commitSha, filePath, previousPath);
     } else {
       useDiffPanelStore.getState().selectWorkingTreeFile(activeThreadRef, filePath);
     }

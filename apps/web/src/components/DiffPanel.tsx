@@ -312,7 +312,7 @@ export default function DiffPanel({
   const reviewSectionId = selectedTurn
     ? `turn:${selectedTurn.runId}`
     : selectedCommit
-      ? `commit:${selectedCommit.sha}`
+      ? `commit:${selectedCommit.sha}:${selectedCommit.filePath}`
       : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
@@ -350,7 +350,17 @@ export default function DiffPanel({
           input: {
             cwd: activeCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
-            ...(selectedCommit ? { commit: selectedCommit.sha } : {}),
+            ...(selectedCommit
+              ? {
+                  commit: selectedCommit.sha,
+                  // One file per click: the whole commit would render every file it touched.
+                  file: {
+                    path: selectedCommit.filePath,
+                    previousPath: selectedCommit.previousPath,
+                    sourceKind: "commit" as const,
+                  },
+                }
+              : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
