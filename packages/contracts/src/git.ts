@@ -23,6 +23,11 @@ export const GitStackedAction = Schema.Literals([
   "commit_push_pr",
 ]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+// How the push step of a stacked action talks to the remote. `publish` pushes with upstream to
+// the primary remote even without new commits, `sync` pulls (fast-forward only) before pushing,
+// and `force_with_lease` overwrites the upstream only if it still matches the last fetch.
+export const GitPushMode = Schema.Literals(["publish", "sync", "force_with_lease"]);
+export type GitPushMode = typeof GitPushMode.Type;
 export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
 export const GitActionProgressKind = Schema.Literals([
@@ -139,6 +144,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   // Commit the index as it is instead of staging the working tree first. Overrides filePaths.
   stagedOnly: Schema.optional(Schema.Boolean),
+  pushMode: Schema.optional(GitPushMode),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -369,6 +375,13 @@ export const VcsPullResult = Schema.Struct({
   upstreamRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
+
+export const VcsRebaseOntoDefaultResult = Schema.Struct({
+  status: Schema.Literals(["rebased", "skipped_up_to_date"]),
+  // Remote-tracking ref the branch was rebased onto, for example origin/main.
+  baseRef: TrimmedNonEmptyStringSchema,
+});
+export type VcsRebaseOntoDefaultResult = typeof VcsRebaseOntoDefaultResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Only a fixed
 // reason reaches the error and its diagnostic suffix; newer, unknown reasons

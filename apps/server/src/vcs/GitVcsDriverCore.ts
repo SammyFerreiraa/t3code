@@ -2851,7 +2851,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* new GitCommandError({
         ...gitCommandContext({ operation: "GitVcsDriver.pullCurrentBranch.pull", cwd, args }),
         ...(reason === null ? {} : { reason }),
-        detail: fetchFailureDetail(result.stderr) ?? "git pull failed",
+        detail:
+          fetchFailureDetail(result.stderr) ??
+          (/^fatal: Not possible to fast-forward/im.test(result.stderr)
+            ? "This branch and its upstream have diverged. Rebase or merge first."
+            : "git pull failed"),
         exitCode: result.exitCode,
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
@@ -4057,7 +4061,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
-    const args = ["fetch", "--quiet", "--", input.remoteName];
+    const args = ["fetch", "--quiet", ...(input.prune ? ["--prune"] : []), "--", input.remoteName];
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,

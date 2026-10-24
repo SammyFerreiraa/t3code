@@ -25,6 +25,7 @@ import {
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
+  type GitPushMode,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
@@ -82,6 +83,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
+import * as GitRemoteSync from "./GitRemoteSync.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -530,6 +532,13 @@ interface CommitAndBranchSuggestion {
   commitMessage: string;
 }
 
+const PUSH_MODE_LABELS: Record<GitPushMode | "default", string> = {
+  default: "Pushing...",
+  publish: "Publishing branch...",
+  sync: "Syncing...",
+  force_with_lease: "Force pushing...",
+};
+
 function isCommitAction(
   action: GitStackedAction,
 ): action is "commit" | "commit_push" | "commit_push_pr" {
@@ -736,12 +745,29 @@ export const make = Effect.gen(function* () {
   const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
     cwd: string,
     branch: string | null,
+    options?: { readonly remoteName?: string },
   ) {
-    const result = yield* gitCore.pushCurrentBranch(cwd, branch);
+    const result = yield* gitCore.pushCurrentBranch(cwd, branch, options);
     if (result.status === "pushed" && result.branch) {
       yield* shareBranchBase(cwd, result.branch);
     }
     return result;
+  });
+  const pushWithMode = Effect.fn("GitManager.pushWithMode")(function* (
+    cwd: string,
+    branch: string | null,
+    mode: GitPushMode | undefined,
+  ) {
+    if (mode === "force_with_lease") return yield* GitRemoteSync.forcePushWithLease(gitCore, cwd);
+    if (mode === "publish") {
+      const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+      return yield* pushCurrentBranch(cwd, branch, { remoteName });
+    }
+    // Without an upstream there is nothing to pull, and the push publishes the branch.
+    if (mode === "sync" && (yield* gitCore.statusDetailsLocal(cwd)).hasUpstream) {
+      yield* gitCore.pullCurrentBranch(cwd);
+    }
+    return yield* pushCurrentBranch(cwd, branch);
   });
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
@@ -3074,6 +3100,17 @@ export const make = Effect.gen(function* () {
             (!initialStatus.hasUpstream || initialStatus.aheadCount > 0));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
+        if (
+          input.pushMode !== undefined &&
+          input.action !== "push" &&
+          !(input.action === "commit_push" && input.pushMode === "sync")
+        ) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "This push mode is not supported for this action.",
+          });
+        }
         if (input.featureBranch && !wantsCommit) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
@@ -3191,11 +3228,11 @@ export const make = Effect.gen(function* () {
               .emit({
                 kind: "phase_started",
                 phase: "push",
-                label: "Pushing...",
+                label: PUSH_MODE_LABELS[input.pushMode ?? "default"],
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() => pushWithMode(input.cwd, currentBranch, input.pushMode)),
               )
           : { status: "skipped_not_requested" as const };
 

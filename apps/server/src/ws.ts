@@ -2929,6 +2929,14 @@ export const layerWsRpc = (
           gitWorkflow.stagePaths(input).pipe(Effect.tap(() => refreshLocalGitStatus(input.cwd))),
         [WS_METHODS.vcsUnstage]: (input) =>
           gitWorkflow.unstagePaths(input).pipe(Effect.tap(() => refreshLocalGitStatus(input.cwd))),
+        [WS_METHODS.vcsFetch]: (input) =>
+          gitWorkflow
+            .fetchBranchRemote(input.cwd)
+            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.vcsRebaseOntoDefault]: (input) =>
+          gitWorkflow
+            .rebaseOntoDefault(input.cwd)
+            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),

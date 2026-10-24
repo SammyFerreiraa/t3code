@@ -7,10 +7,12 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  GitPushMode,
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
@@ -29,11 +31,13 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
@@ -90,13 +94,16 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
+  useVcsFetchAction,
   useVcsPullAction,
+  useVcsRebaseOntoDefaultAction,
 } from "~/lib/sourceControlActions";
 import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -119,11 +126,19 @@ import {
 import {
   resolveSourceControlMenuExtras,
   type SourceControlCommitDraft,
+  type SourceControlMenuExtraId,
 } from "./sourceControl/sourceControlPanel.logic";
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+
+async function confirmDestructiveGitAction(message: string): Promise<boolean> {
+  return (
+    (await requestConfirmDialog(message, { variant: "destructive" })) ??
+    window.confirm(message.replace("\n", " "))
+  );
+}
 
 interface GitActionsControlProps {
   presentation?: "toolbar" | "menu";
@@ -147,6 +162,7 @@ interface PendingDefaultBranchAction {
   onSucceeded?: () => void;
   filePaths?: string[];
   stagedOnly?: boolean;
+  pushMode?: GitPushMode;
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -161,6 +177,7 @@ interface RunGitActionWithToastInput {
   featureBranch?: boolean;
   filePaths?: string[];
   stagedOnly?: boolean;
+  pushMode?: GitPushMode;
 }
 
 interface InlineGitActionSuccess {
@@ -186,7 +203,13 @@ function requestVcsStatusRefresh(
   }
   void refresh({ environmentId, input: { cwd } });
 }
-const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const RUNNING_SOURCE_CONTROL_ACTIONS = [
+  "runStackedAction",
+  "pull",
+  "fetch",
+  "rebase",
+  "publishRepository",
+] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = sourceControlClients.definitions.map((definition) => ({
   value: definition.kind,
@@ -1112,6 +1135,8 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
+  const fetchAction = useVcsFetchAction(sourceControlScope);
+  const rebaseAction = useVcsRebaseOntoDefaultAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
@@ -1240,6 +1265,7 @@ export default function GitActionsControl({
     featureBranch = false,
     filePaths,
     stagedOnly,
+    pushMode,
   }: RunGitActionWithToastInput) {
     if (
       activeEnvironmentId === null ||
@@ -1279,6 +1305,7 @@ export default function GitActionsControl({
         ...(onSucceeded ? { onSucceeded } : {}),
         ...(filePaths ? { filePaths } : {}),
         ...(stagedOnly ? { stagedOnly } : {}),
+        ...(pushMode ? { pushMode } : {}),
       });
       return;
     }
@@ -1295,6 +1322,7 @@ export default function GitActionsControl({
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(stagedOnly ? { stagedOnly } : {}),
+      ...(pushMode ? { pushMode } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
     });
@@ -1395,7 +1423,7 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, onSucceeded, filePaths, stagedOnly } =
+    const { action, commitMessage, onConfirmed, onSucceeded, filePaths, stagedOnly, pushMode } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
@@ -1405,6 +1433,7 @@ export default function GitActionsControl({
       ...(onSucceeded ? { onSucceeded } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(stagedOnly ? { stagedOnly } : {}),
+      ...(pushMode ? { pushMode } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -1428,10 +1457,14 @@ export default function GitActionsControl({
     });
   };
 
-  const runPull = () => {
+  const runWithResultToast = <A, E>(input: {
+    failureTitle: string;
+    run: () => Promise<AtomCommandResult<A, E>>;
+    describe: (value: A) => { title: string; description: string };
+  }) => {
     void (async () => {
       setInlineSuccess(null);
-      const result = await pullAction.run();
+      const result = await input.run();
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
           return;
@@ -1441,7 +1474,7 @@ export default function GitActionsControl({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Pull failed",
+            title: input.failureTitle,
             description: error instanceof Error ? error.message : "An error occurred.",
             timeout: errorToastTiming.timeout,
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
@@ -1450,12 +1483,7 @@ export default function GitActionsControl({
         return;
       }
 
-      const pullResult = result.value;
-      const title = pullResult.status === "pulled" ? "Pulled" : "Already up to date";
-      const description =
-        pullResult.status === "pulled"
-          ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
-          : `${pullResult.refName} is already synchronized.`;
+      const { title, description } = input.describe(result.value);
       if (isPanel) {
         setInlineSuccess({ title, description, scopeKey: successScopeKey });
         return;
@@ -1474,6 +1502,98 @@ export default function GitActionsControl({
         },
       });
     })();
+  };
+
+  const runPull = () =>
+    runWithResultToast({
+      failureTitle: "Pull failed",
+      run: pullAction.run,
+      describe: (pullResult) =>
+        pullResult.status === "pulled"
+          ? {
+              title: "Pulled",
+              description: `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`,
+            }
+          : {
+              title: "Already up to date",
+              description: `${pullResult.refName} is already synchronized.`,
+            },
+    });
+
+  const renderSourceControlExtraIcon = (id: SourceControlMenuExtraId) => {
+    switch (id) {
+      case "pull":
+      case "fetch":
+        return <CloudDownloadIcon />;
+      case "publish_branch":
+        return <CloudUploadIcon />;
+      case "sync":
+        return <RefreshCwIcon />;
+      case "rebase":
+        return <GitBranchIcon />;
+      default:
+        return (
+          <GitActionItemIcon
+            icon={id === "commit_push_pr" ? "pr" : "push"}
+            SourceControlIcon={SourceControlIcon}
+          />
+        );
+    }
+  };
+
+  const runSourceControlExtra = async (id: SourceControlMenuExtraId) => {
+    const branch = gitStatusForActions?.refName ?? "this branch";
+    switch (id) {
+      case "commit_push":
+      case "commit_push_pr":
+        return void runGitActionWithToast({ action: id, ...commitDraftArgs(id) });
+      case "commit_sync":
+        return void runGitActionWithToast({
+          action: "commit_push",
+          pushMode: "sync",
+          ...commitDraftArgs("commit_push"),
+        });
+      case "sync":
+        return void runGitActionWithToast({ action: "push", pushMode: "sync" });
+      case "publish_branch":
+        return void runGitActionWithToast({ action: "push", pushMode: "publish" });
+      case "force_push":
+        if (
+          await confirmDestructiveGitAction(
+            `Force push ${branch}?\nThis replaces the remote branch with your local history. It stops if someone else pushed since your last fetch.`,
+          )
+        ) {
+          void runGitActionWithToast({ action: "push", pushMode: "force_with_lease" });
+        }
+        return;
+      case "pull":
+        return runPull();
+      case "fetch":
+        return runWithResultToast({
+          failureTitle: "Fetch failed",
+          run: fetchAction.run,
+          describe: () => ({ title: "Fetched", description: "Remote branches are up to date." }),
+        });
+      case "rebase":
+        if (
+          await confirmDestructiveGitAction(
+            `Rebase ${branch} onto the default branch?\nThis fetches the remote's default branch and replays your commits on top. If they conflict, the rebase is aborted and nothing changes. A published branch then needs a force push.`,
+          )
+        ) {
+          runWithResultToast({
+            failureTitle: "Rebase failed",
+            run: rebaseAction.run,
+            describe: (result) =>
+              result.status === "rebased"
+                ? { title: "Rebased", description: `${branch} now sits on ${result.baseRef}.` }
+                : {
+                    title: "Already up to date",
+                    description: `${branch} already contains ${result.baseRef}.`,
+                  },
+          });
+        }
+        return;
+    }
   };
 
   const runQuickAction = () => {
@@ -1643,16 +1763,7 @@ export default function GitActionsControl({
       })}
       {commitDraft && gitStatusForActions?.isRepo && gitStatusForActions.refName !== null
         ? resolveSourceControlMenuExtras(gitStatusForActions, isGitActionRunning).map((extra) => {
-            const run = () => {
-              if (extra.action === "pull") {
-                runPull();
-                return;
-              }
-              void runGitActionWithToast({
-                action: extra.action,
-                ...commitDraftArgs(extra.action),
-              });
-            };
+            const icon = renderSourceControlExtraIcon(extra.id);
             if (extra.disabledReason) {
               return (
                 <Popover key={extra.id}>
@@ -1662,10 +1773,7 @@ export default function GitActionsControl({
                     render={<span className="block w-full cursor-not-allowed" />}
                   >
                     <MenuItem className="w-full" disabled>
-                      <GitActionItemIcon
-                        icon={extra.action === "commit_push_pr" ? "pr" : "push"}
-                        SourceControlIcon={SourceControlIcon}
-                      />
+                      {icon}
                       <MenuItemLabel>{extra.label}</MenuItemLabel>
                     </MenuItem>
                   </PopoverTrigger>
@@ -1676,15 +1784,12 @@ export default function GitActionsControl({
               );
             }
             return (
-              <MenuItem key={extra.id} disabled={!canWriteSourceControl} onClick={run}>
-                {extra.action === "pull" ? (
-                  <CloudDownloadIcon />
-                ) : (
-                  <GitActionItemIcon
-                    icon={extra.action === "commit_push_pr" ? "pr" : "push"}
-                    SourceControlIcon={SourceControlIcon}
-                  />
-                )}
+              <MenuItem
+                key={extra.id}
+                disabled={!canWriteSourceControl}
+                onClick={() => void runSourceControlExtra(extra.id)}
+              >
+                {icon}
                 <MenuItemLabel>{extra.label}</MenuItemLabel>
               </MenuItem>
             );

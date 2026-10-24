@@ -366,6 +366,20 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
     }),
+    fetch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:fetch",
+      tag: WS_METHODS.vcsFetch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    rebaseOntoDefault: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:rebase-onto-default",
+      tag: WS_METHODS.vcsRebaseOntoDefault,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
   };
 }
 

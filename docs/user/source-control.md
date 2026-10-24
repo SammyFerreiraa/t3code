@@ -155,6 +155,15 @@ the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
+## Sync with the remote
+
+The **Source Control** tab in the right panel stages files and commits like the header does. Its
+menu adds Fetch, Pull, Sync, Commit & sync, Publish branch, Force push, and Rebase from the default
+branch. Pull and Sync only fast-forward; if your branch and its upstream have diverged, rebase or
+merge first. Force push stops if someone pushed since your last fetch, and is not available on the
+default branch. Rebase needs a clean working tree. If it hits conflicts, T3 Code aborts it and
+leaves the branch as it was, so resolve those conflicts in a terminal.
+
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,

@@ -99,17 +99,17 @@ describe("resolveSourceControlMenuExtras", () => {
         state: "open",
       },
     });
-    expect(resolveSourceControlMenuExtras(open, false).map((item) => item.id)).toEqual([
-      "commit_push",
-      "pull",
-    ]);
+    const ids = resolveSourceControlMenuExtras(open, false).map((item) => item.id);
+    expect(ids).toContain("commit_push");
+    expect(ids).not.toContain("commit_push_pr");
   });
 
   it("offers no PR from the default ref", () => {
     const ids = resolveSourceControlMenuExtras(status({ isDefaultRef: true }), false).map(
       (item) => item.id,
     );
-    expect(ids).toEqual(["commit_push", "pull"]);
+    expect(ids).toContain("commit_push");
+    expect(ids).not.toContain("commit_push_pr");
   });
 
   it("refuses to pull a diverged branch, like the header", () => {
@@ -120,5 +120,58 @@ describe("resolveSourceControlMenuExtras", () => {
     expect(reason(status({ behindCount: 1 }), "pull")).toBeNull();
     expect(reason(status(), "pull")).toMatch(/not behind/);
     expect(reason(status({ hasUpstream: false }), "pull")).toMatch(/no upstream/);
+  });
+
+  it("syncs only a published branch that has not diverged", () => {
+    expect(reason(status({ aheadCount: 1, behindCount: 0 }), "sync")).toBeNull();
+    expect(reason(status({ behindCount: 3 }), "sync")).toBeNull();
+    expect(reason(status({ hasUpstream: false }), "sync")).toMatch(/Publish the branch/);
+    expect(reason(status({ aheadCount: 1, behindCount: 1 }), "sync")).toMatch(/diverged/);
+  });
+
+  it("commits and syncs only when the commit cannot diverge the branch", () => {
+    expect(reason(status(), "commit_sync")).toBeNull();
+    expect(reason(status({ behindCount: 1 }), "commit_sync")).toMatch(/behind upstream/);
+    expect(reason(status({ hasWorkingTreeChanges: false }), "commit_sync")).toMatch(/clean/);
+    expect(reason(status({ hasUpstream: false }), "commit_sync")).toMatch(/Publish the branch/);
+  });
+
+  it("force pushes only a published feature branch that differs from its upstream", () => {
+    expect(reason(status({ aheadCount: 2, behindCount: 2 }), "force_push")).toBeNull();
+    expect(reason(status({ aheadCount: 1, isDefaultRef: true }), "force_push")).toMatch(
+      /blocked on the default branch/,
+    );
+    expect(reason(status({ aheadCount: 1, hasUpstream: false }), "force_push")).toMatch(
+      /Publish the branch/,
+    );
+    expect(reason(status(), "force_push")).toMatch(/matches its upstream/);
+  });
+
+  it("rebases from the default branch only off it and with a clean tree", () => {
+    const cleanTree = { hasWorkingTreeChanges: false };
+    expect(reason(status(cleanTree), "rebase")).toBeNull();
+    expect(reason(status(), "rebase")).toMatch(/Commit or stash/);
+    expect(reason(status({ ...cleanTree, isDefaultRef: true }), "rebase")).toMatch(
+      /Already on the default branch/,
+    );
+    expect(reason(status({ ...cleanTree, hasPrimaryRemote: false }), "rebase")).toMatch(
+      /Add a remote/,
+    );
+  });
+
+  it("fetches whenever a remote is reachable", () => {
+    expect(reason(status({ refName: null }), "fetch")).toBeNull();
+    expect(reason(status({ hasUpstream: false, hasPrimaryRemote: false }), "fetch")).toMatch(
+      /Add a remote/,
+    );
+    expect(reason(status(), "fetch", true)).toBe("Git action in progress.");
+  });
+
+  it("publishes a branch only while it has no upstream", () => {
+    expect(reason(status({ hasUpstream: false }), "publish_branch")).toBeNull();
+    expect(reason(status(), "publish_branch")).toMatch(/already published/);
+    expect(
+      reason(status({ hasUpstream: false, hasPrimaryRemote: false }), "publish_branch"),
+    ).toMatch(/origin/);
   });
 });

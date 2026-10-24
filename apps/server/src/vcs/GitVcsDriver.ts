@@ -255,6 +255,8 @@ export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
   refName?: string;
+  /** Drop remote-tracking refs whose remote branch is gone. */
+  prune?: boolean;
 }
 
 export interface GitRemoteExistsInput {

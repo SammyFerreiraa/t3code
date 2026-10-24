@@ -121,10 +121,11 @@ export function SourceControlFileSections({
   const stage = useAtomCommand(vcsEnvironment.stage, "Stage changes");
   const unstage = useAtomCommand(vcsEnvironment.unstage, "Unstage changes");
   const [isIndexActionPending, setIndexActionPending] = useState(false);
-  // A commit or pull rewrites the index, so editing it meanwhile would race them.
+  // A commit, pull or rebase rewrites the index, so editing it meanwhile would race them.
   const isGitActionRunning = useSourceControlActionRunning({ environmentId, cwd: gitCwd }, [
     "runStackedAction",
     "pull",
+    "rebase",
   ]);
   const onIndexAction: RunIndexAction = (action, paths) => {
     setIndexActionPending(true);

@@ -35,6 +35,8 @@ import { vcsActionManager, vcsEnvironment } from "./vcs";
 export type SourceControlActionKind =
   | "init"
   | "pull"
+  | "fetch"
+  | "rebase"
   | "publishRepository"
   | "runStackedAction"
   | "preparePullRequestThread";
@@ -65,6 +67,8 @@ interface SourceControlActionState<
 const ACTION_OPERATION = {
   init: "init",
   pull: "pull",
+  fetch: "fetch",
+  rebase: "rebase",
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
@@ -215,6 +219,46 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
     action,
     onSuccess: status.refresh,
   });
+}
+
+export function useVcsFetchAction(scope: SourceControlActionScope) {
+  const fetch = useAtomCommand(vcsEnvironment.fetch, { reportFailure: false });
+  const action = async () => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "fetch",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
+    }
+    return fetch({ environmentId: target.environmentId, input: { cwd: target.cwd } });
+  };
+  return useAction({ kind: "fetch", label: "Fetching...", scope, action });
+}
+
+export function useVcsRebaseOntoDefaultAction(scope: SourceControlActionScope) {
+  const rebase = useAtomCommand(vcsEnvironment.rebaseOntoDefault, { reportFailure: false });
+  const action = async () => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "rebase",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
+    }
+    return rebase({ environmentId: target.environmentId, input: { cwd: target.cwd } });
+  };
+  return useAction({ kind: "rebase", label: "Rebasing onto the default branch...", scope, action });
 }
 
 export function useGitStackedAction(scope: SourceControlActionScope) {

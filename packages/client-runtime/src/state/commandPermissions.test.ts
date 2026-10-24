@@ -211,7 +211,13 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const gitMethods = [WS_METHODS.vcsInit, WS_METHODS.vcsStage, WS_METHODS.vcsUnstage];
+        const gitMethods = [
+          WS_METHODS.vcsInit,
+          WS_METHODS.vcsStage,
+          WS_METHODS.vcsUnstage,
+          WS_METHODS.vcsFetch,
+          WS_METHODS.vcsRebaseOntoDefault,
+        ];
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         for (const method of gitMethods) {
           const git = createCommandPermissions(runtime, method);

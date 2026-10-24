@@ -64,8 +64,13 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("keeps staging and unstaging behind source control write", () => {
-    for (const method of [WS_METHODS.vcsStage, WS_METHODS.vcsUnstage]) {
+  it("keeps index and remote sync methods behind source control write", () => {
+    for (const method of [
+      WS_METHODS.vcsStage,
+      WS_METHODS.vcsUnstage,
+      WS_METHODS.vcsFetch,
+      WS_METHODS.vcsRebaseOntoDefault,
+    ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
     }
   });

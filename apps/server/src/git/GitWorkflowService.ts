@@ -28,10 +28,12 @@ import {
   type VcsStatusRemoteResult,
   type VcsStatusResult,
   type VcsIndexInput,
+  type VcsRebaseOntoDefaultResult,
 } from "@t3tools/contracts";
 
 import * as GitIndexStaging from "./GitIndexStaging.ts";
 import * as GitManager from "./GitManager.ts";
+import * as GitRemoteSync from "./GitRemoteSync.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -64,6 +66,10 @@ export class GitWorkflowService extends Context.Service<
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly stagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
     readonly unstagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
+    readonly fetchBranchRemote: (cwd: string) => Effect.Effect<void, GitCommandError>;
+    readonly rebaseOntoDefault: (
+      cwd: string,
+    ) => Effect.Effect<VcsRebaseOntoDefaultResult, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -381,6 +387,14 @@ export const make = Effect.gen(function* () {
     unstagePaths: (input) =>
       ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
         Effect.andThen(GitIndexStaging.unstagePaths(git, input)),
+      ),
+    fetchBranchRemote: (cwd) =>
+      ensureGitCommand("GitWorkflowService.fetchBranchRemote", cwd).pipe(
+        Effect.andThen(GitRemoteSync.fetchBranchRemote(git, cwd)),
+      ),
+    rebaseOntoDefault: (cwd) =>
+      ensureGitCommand("GitWorkflowService.rebaseOntoDefault", cwd).pipe(
+        Effect.andThen(GitRemoteSync.rebaseOntoDefault(git, cwd)),
       ),
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(

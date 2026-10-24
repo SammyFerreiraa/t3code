@@ -4,6 +4,7 @@ import {
   GitActionProgressPhase,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
+  type GitPushMode,
   type GitRunStackedActionResult,
   GitStackedAction,
   type ThreadId,
@@ -34,6 +35,8 @@ export const VcsActionOperation = Schema.Literals([
   "refresh_status",
   "run_change_request",
   "pull",
+  "fetch",
+  "rebase",
   "switch_ref",
   "create_ref",
   "create_worktree",
@@ -80,6 +83,7 @@ export interface RunVcsStackedActionInput {
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
   readonly stagedOnly?: boolean;
+  readonly pushMode?: GitPushMode;
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
@@ -473,6 +477,7 @@ export function createVcsActionManager<R, E>(
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.stagedOnly ? { stagedOnly: true } : {}),
+          ...(input.pushMode ? { pushMode: input.pushMode } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         };

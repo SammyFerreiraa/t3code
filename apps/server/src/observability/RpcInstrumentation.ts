@@ -177,6 +177,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.vcsInit]: "vcs",
   [WS_METHODS.vcsStage]: "vcs",
   [WS_METHODS.vcsUnstage]: "vcs",
+  [WS_METHODS.vcsFetch]: "vcs",
+  [WS_METHODS.vcsRebaseOntoDefault]: "vcs",
   [WS_METHODS.reviewGetDiffPreview]: "review",
   [WS_METHODS.reviewGetDiffFileContents]: "review",
   [WS_METHODS.terminalOpen]: "terminal",
