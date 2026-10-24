@@ -37,6 +37,7 @@ export const VcsActionOperation = Schema.Literals([
   "pull",
   "fetch",
   "rebase",
+  "stage",
   "switch_ref",
   "create_ref",
   "create_worktree",

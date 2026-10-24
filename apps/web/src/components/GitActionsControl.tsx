@@ -208,6 +208,7 @@ const RUNNING_SOURCE_CONTROL_ACTIONS = [
   "pull",
   "fetch",
   "rebase",
+  "stage",
   "publishRepository",
 ] as const;
 
@@ -1560,7 +1561,7 @@ export default function GitActionsControl({
       case "force_push":
         if (
           await confirmDestructiveGitAction(
-            `Force push ${branch}?\nThis replaces the remote branch with your local history. It stops if someone else pushed since your last fetch.`,
+            `Force push ${branch}?\nThis replaces the remote branch with your local history. It stops if the remote has commits you have not pulled.`,
           )
         ) {
           void runGitActionWithToast({ action: "push", pushMode: "force_with_lease" });

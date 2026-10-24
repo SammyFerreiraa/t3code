@@ -72,7 +72,7 @@ describe("diffPanelStore", () => {
     });
     const persisted = useDiffPanelStore.persist.getOptions().partialize!(
       useDiffPanelStore.getState(),
-    );
+    ) as { byThreadKey: Record<string, unknown> };
     expect(persisted.byThreadKey).not.toHaveProperty("env:commit-thread");
   });
 });

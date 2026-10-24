@@ -37,6 +37,7 @@ export type SourceControlActionKind =
   | "pull"
   | "fetch"
   | "rebase"
+  | "stage"
   | "publishRepository"
   | "runStackedAction"
   | "preparePullRequestThread";
@@ -69,6 +70,7 @@ const ACTION_OPERATION = {
   pull: "pull",
   fetch: "fetch",
   rebase: "rebase",
+  stage: "stage",
   publishRepository: "publish_repository",
   runStackedAction: "run_change_request",
   preparePullRequestThread: "prepare_pull_request_thread",
@@ -259,6 +261,31 @@ export function useVcsRebaseOntoDefaultAction(scope: SourceControlActionScope) {
     return rebase({ environmentId: target.environmentId, input: { cwd: target.cwd } });
   };
   return useAction({ kind: "rebase", label: "Rebasing onto the default branch...", scope, action });
+}
+
+// Staging goes through the shared running state so commit, pull and the rest wait for it.
+export function useVcsIndexAction(scope: SourceControlActionScope) {
+  const stage = useAtomCommand(vcsEnvironment.stage, "Stage changes");
+  const unstage = useAtomCommand(vcsEnvironment.unstage, "Unstage changes");
+  const action = async (kind: "stage" | "unstage", paths?: string[]) => {
+    const target = resolveScope(scope);
+    if (target === null) {
+      return AsyncResult.failure<never, VcsActionUnavailableError>(
+        Cause.fail(
+          new VcsActionUnavailableError({
+            operation: "stage",
+            environmentId: scope.environmentId,
+            cwd: scope.cwd,
+          }),
+        ),
+      );
+    }
+    return (kind === "stage" ? stage : unstage)({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd, ...(paths ? { paths } : {}) },
+    });
+  };
+  return useAction({ kind: "stage", label: "Updating the index...", scope, action });
 }
 
 export function useGitStackedAction(scope: SourceControlActionScope) {

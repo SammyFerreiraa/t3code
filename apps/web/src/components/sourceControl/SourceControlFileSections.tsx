@@ -5,9 +5,7 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { useSourceControlActionRunning } from "~/state/sourceControlActions";
-import { useAtomCommand } from "~/state/use-atom-command";
-import { vcsEnvironment } from "~/state/vcs";
+import { useSourceControlActionRunning, useVcsIndexAction } from "~/state/sourceControlActions";
 import { StartTruncatedPath } from "../StartTruncatedPath";
 import type { SourceControlSectionFile, SourceControlSections } from "./sourceControlPanel.logic";
 
@@ -118,9 +116,7 @@ export function SourceControlFileSections({
   readonly disabled: boolean;
   readonly onOpenFileDiff: (filePath: string) => void;
 }) {
-  const stage = useAtomCommand(vcsEnvironment.stage, "Stage changes");
-  const unstage = useAtomCommand(vcsEnvironment.unstage, "Unstage changes");
-  const [isIndexActionPending, setIndexActionPending] = useState(false);
+  const indexAction = useVcsIndexAction({ environmentId, cwd: gitCwd });
   // A commit, pull or rebase rewrites the index, so editing it meanwhile would race them.
   const isGitActionRunning = useSourceControlActionRunning({ environmentId, cwd: gitCwd }, [
     "runStackedAction",
@@ -128,14 +124,10 @@ export function SourceControlFileSections({
     "rebase",
   ]);
   const onIndexAction: RunIndexAction = (action, paths) => {
-    setIndexActionPending(true);
-    void (action === "stage" ? stage : unstage)({
-      environmentId,
-      input: { cwd: gitCwd, ...(paths ? { paths } : {}) },
-    }).finally(() => setIndexActionPending(false));
+    void indexAction.run(action, paths);
   };
   const shared = {
-    disabled: disabled || isIndexActionPending || isGitActionRunning,
+    disabled: disabled || indexAction.isPending || isGitActionRunning,
     onIndexAction,
     onOpenFileDiff,
   };

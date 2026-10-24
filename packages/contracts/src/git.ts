@@ -25,7 +25,8 @@ export const GitStackedAction = Schema.Literals([
 export type GitStackedAction = typeof GitStackedAction.Type;
 // How the push step of a stacked action talks to the remote. `publish` pushes with upstream to
 // the primary remote even without new commits, `sync` pulls (fast-forward only) before pushing,
-// and `force_with_lease` overwrites the upstream only if it still matches the last fetch.
+// and `force_with_lease` overwrites the upstream only if every commit on it is already in
+// the branch, so commits you have not pulled are never erased.
 export const GitPushMode = Schema.Literals(["publish", "sync", "force_with_lease"]);
 export type GitPushMode = typeof GitPushMode.Type;
 export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
