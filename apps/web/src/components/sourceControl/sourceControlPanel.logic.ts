@@ -61,7 +61,9 @@ const BEHIND_PUSH_REASON = "Branch is behind upstream. Pull/rebase before pushin
 
 /**
  * The header's quick action offers to commit and push on a branch that is behind, which its own
- * Push item refuses. The tab's menu follows that refusal, so its main button does too.
+ * Push item refuses. The tab's menu follows that refusal, so its main button falls back to what
+ * is possible: a local commit. Without changes the header already offers Pull, or says to
+ * rebase/merge first when diverged.
  */
 export function resolveSourceControlQuickAction(
   quickAction: GitQuickAction,
@@ -73,7 +75,7 @@ export function resolveSourceControlQuickAction(
     quickAction.kind === "run_action" &&
     (quickAction.action === "commit_push" || quickAction.action === "commit_push_pr")
   ) {
-    return { ...quickAction, kind: "show_hint", disabled: true, hint: BEHIND_PUSH_REASON };
+    return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
   }
   return quickAction;
 }

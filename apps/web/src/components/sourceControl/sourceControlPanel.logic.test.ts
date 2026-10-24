@@ -188,11 +188,26 @@ describe("resolveSourceControlMenuExtras", () => {
 });
 
 describe("resolveSourceControlQuickAction", () => {
-  it("does not offer to push from a branch that is behind, like the menu", () => {
+  it("commits locally instead of pushing from a branch that is behind, like the menu", () => {
     const behind = status({ behindCount: 2, aheadCount: 0 });
-    const quick = resolveSourceControlQuickAction(resolveQuickAction(behind, false), behind);
-    expect(quick).toMatchObject({ disabled: true, kind: "show_hint" });
-    expect(quick.hint).toMatch(/behind upstream/);
+    expect(resolveSourceControlQuickAction(resolveQuickAction(behind, false), behind)).toEqual({
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    });
+  });
+
+  it("keeps the header's Pull, or its diverged hint, when there is nothing to commit", () => {
+    const clean = status({ hasWorkingTreeChanges: false, behindCount: 2, aheadCount: 0 });
+    expect(resolveSourceControlQuickAction(resolveQuickAction(clean, false), clean)).toMatchObject({
+      label: "Pull",
+      kind: "run_pull",
+    });
+    const diverged = status({ hasWorkingTreeChanges: false, behindCount: 2, aheadCount: 1 });
+    expect(
+      resolveSourceControlQuickAction(resolveQuickAction(diverged, false), diverged),
+    ).toMatchObject({ disabled: true, kind: "show_hint" });
   });
 
   it("leaves the header's choice alone otherwise", () => {
