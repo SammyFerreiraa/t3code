@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { useSourceControlActionRunning } from "~/state/sourceControlActions";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { StartTruncatedPath } from "../StartTruncatedPath";
@@ -119,12 +120,24 @@ export function SourceControlFileSections({
 }) {
   const stage = useAtomCommand(vcsEnvironment.stage, "Stage changes");
   const unstage = useAtomCommand(vcsEnvironment.unstage, "Unstage changes");
-  const onIndexAction: RunIndexAction = (action, paths) =>
+  const [isIndexActionPending, setIndexActionPending] = useState(false);
+  // A commit or pull rewrites the index, so editing it meanwhile would race them.
+  const isGitActionRunning = useSourceControlActionRunning({ environmentId, cwd: gitCwd }, [
+    "runStackedAction",
+    "pull",
+  ]);
+  const onIndexAction: RunIndexAction = (action, paths) => {
+    setIndexActionPending(true);
     void (action === "stage" ? stage : unstage)({
       environmentId,
       input: { cwd: gitCwd, ...(paths ? { paths } : {}) },
-    });
-  const shared = { disabled, onIndexAction, onOpenFileDiff };
+    }).finally(() => setIndexActionPending(false));
+  };
+  const shared = {
+    disabled: disabled || isIndexActionPending || isGitActionRunning,
+    onIndexAction,
+    onOpenFileDiff,
+  };
   return (
     <div className="flex flex-col gap-1">
       {/* Staged files open the working tree diff: the diff panel has no index-only view. */}

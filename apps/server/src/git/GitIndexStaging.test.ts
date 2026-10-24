@@ -71,6 +71,24 @@ it.layer(layer)("GitIndexStaging", (it) => {
     }),
   );
 
+  it.effect("unstages next to a file named HEAD", () =>
+    Effect.gen(function* () {
+      const { cwd, driver, git, write, files } = yield* setupRepo({ commit: true });
+      yield* write("HEAD", "a file, not the revision\n");
+      yield* git("add", "HEAD");
+      yield* git("commit", "-m", "add HEAD file");
+      yield* write("HEAD", "changed\n");
+      yield* write("tracked.txt", "one\ntwo\n");
+      yield* GitIndexStaging.stagePaths(driver, { cwd });
+      assert.deepStrictEqual(yield* files(), ["HEAD:S", "tracked.txt:S"]);
+
+      yield* GitIndexStaging.unstagePaths(driver, { cwd, paths: ["HEAD"] });
+      assert.deepStrictEqual(yield* files(), ["HEAD:U", "tracked.txt:S"]);
+      yield* GitIndexStaging.unstagePaths(driver, { cwd });
+      assert.deepStrictEqual(yield* files(), ["HEAD:U", "tracked.txt:U"]);
+    }),
+  );
+
   it.effect("unstages in a repository without commits", () =>
     Effect.gen(function* () {
       const { cwd, driver, write, files } = yield* setupRepo({ commit: false });

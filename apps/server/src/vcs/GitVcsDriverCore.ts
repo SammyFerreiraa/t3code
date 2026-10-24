@@ -2166,33 +2166,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ]).pipe(Effect.map(parseReviewNumstat));
     const [numstat, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
-        // Plumbing, because porcelain `git diff` rewrites the index even with
-        // GIT_OPTIONAL_LOCKS=0. -M keeps porcelain's rename detection.
-        executeGitWithStableDiagnostics(
-          "GitVcsDriver.statusDetails.numstat",
-          cwd,
+        Effect.all(
           [
-            "diff-index",
-            ...(hasStagedChanges ? ["--cached"] : []),
-            "-M",
-            "--numstat",
-            "-z",
-            "HEAD",
-            "--",
+            // Plumbing, because porcelain `git diff` rewrites the index even with
+            // GIT_OPTIONAL_LOCKS=0. -M keeps porcelain's rename detection.
+            executeGitWithStableDiagnostics(
+              "GitVcsDriver.statusDetails.numstat",
+              cwd,
+              [
+                "diff-index",
+                ...(hasStagedChanges ? ["--cached"] : []),
+                "-M",
+                "--numstat",
+                "-z",
+                "HEAD",
+                "--",
+              ],
+              { allowNonZeroExit: true },
+            ),
+            hasStagedChanges ? unstagedNumstat : Effect.succeed(null),
           ],
-          { allowNonZeroExit: true },
+          { concurrency: "unbounded" },
         ).pipe(
-          Effect.flatMap((result) => {
+          Effect.flatMap(([result, unstagedWithStaged]) => {
             if (result.exitCode === 0) {
               const entries = parseReviewNumstat(result.stdout);
-              return hasStagedChanges
-                ? Effect.map(unstagedNumstat, (unstaged) => ({ staged: entries, unstaged }))
-                : Effect.succeed({ staged: [], unstaged: entries });
+              return Effect.succeed(
+                unstagedWithStaged
+                  ? { staged: entries, unstaged: unstagedWithStaged }
+                  : { staged: [], unstaged: entries },
+              );
             }
             if (isUnbornHeadStderr(result.stderr)) {
               return Effect.map(
                 Effect.all([
-                  unstagedNumstat,
+                  unstagedWithStaged ? Effect.succeed(unstagedWithStaged) : unstagedNumstat,
                   runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
                     "diff",
                     "--cached",
@@ -2305,6 +2313,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const staged = stagedStats.get(filePath) ?? NO_LINE_CHANGES;
         const unstaged = unstagedStats.get(filePath) ?? NO_LINE_CHANGES;
         const state = indexStates.get(filePath);
+        // With something staged this sums both sides rather than the net HEAD-to-worktree
+        // change, so a staged line reverted in the worktree counts twice; the unborn path always
+        // did this, and the net diff would cost a third git process per status.
         insertions += staged.insertions + unstaged.insertions;
         deletions += staged.deletions + unstaged.deletions;
         return {

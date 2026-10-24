@@ -6,14 +6,16 @@ import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 type Git = GitVcsDriver.GitVcsDriver["Service"];
 
 // Status paths are repository-relative while cwd can be a subdirectory. Paths go through stdin
-// so staging a whole section cannot overflow the command line on Windows.
+// so staging a whole section cannot overflow the command line on Windows. Without paths the
+// pathspec is the whole repository.
 const pathspecArgs = (input: VcsIndexInput) =>
   input.paths
     ? {
-        args: ["--pathspec-from-file=-", "--pathspec-file-nul"],
+        flags: ["--pathspec-from-file=-", "--pathspec-file-nul"],
+        pathspec: [],
         stdin: `${input.paths.map((file) => `:(top,literal)${file}`).join("\0")}\0`,
       }
-    : { args: ["--", ":/"] };
+    : { flags: [], pathspec: [":/"] };
 
 export const stagePaths = Effect.fn("GitIndexStaging.stagePaths")(function* (
   git: Git,
@@ -23,7 +25,7 @@ export const stagePaths = Effect.fn("GitIndexStaging.stagePaths")(function* (
   yield* git.execute({
     operation: "GitIndexStaging.stagePaths",
     cwd: input.cwd,
-    args: ["add", "-A", ...pathspec.args],
+    args: ["add", "-A", ...pathspec.flags, "--", ...pathspec.pathspec],
     ...(pathspec.stdin ? { stdin: pathspec.stdin } : {}),
   });
 });
@@ -47,8 +49,19 @@ export const unstagePaths = Effect.fn("GitIndexStaging.unstagePaths")(function* 
     // from the worktree, which plain `rm --cached` refuses; the worktree file is kept.
     args:
       head.exitCode === 0
-        ? ["reset", "-q", "HEAD", ...pathspec.args]
-        : ["rm", "--cached", "-r", "-f", "-q", "--ignore-unmatch", ...pathspec.args],
+        ? // `--` after HEAD keeps a file named HEAD from making the revision ambiguous.
+          ["reset", "-q", ...pathspec.flags, "HEAD", "--", ...pathspec.pathspec]
+        : [
+            "rm",
+            "--cached",
+            "-r",
+            "-f",
+            "-q",
+            "--ignore-unmatch",
+            ...pathspec.flags,
+            "--",
+            ...pathspec.pathspec,
+          ],
     ...(pathspec.stdin ? { stdin: pathspec.stdin } : {}),
   });
 });
