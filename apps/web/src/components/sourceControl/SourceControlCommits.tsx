@@ -38,14 +38,18 @@ function QueryError({
   );
 }
 
+type OpenCommitFile = (sha: string, filePath: string) => void;
+
 function CommitFiles({
   environmentId,
   cwd,
   sha,
+  onOpenCommitFile,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly sha: string;
+  readonly onOpenCommitFile: OpenCommitFile;
 }) {
   const files = useEnvironmentQuery(
     vcsEnvironment.commitFiles({ environmentId, input: { cwd, sha } }),
@@ -59,14 +63,20 @@ function CommitFiles({
   }
   return (
     <>
-      {/* Files are not links: the diff panel only compares the working tree and the branch. */}
       <ul className="ms-6 flex flex-col">
         {files.data.files.map((file) => (
-          <li key={file.path} className="flex items-center gap-2 px-1.5 py-0.5 font-mono text-xs">
-            <span className="w-3 shrink-0 text-muted-foreground">
-              {COMMIT_FILE_STATUS_LETTER[file.status]}
-            </span>
-            <StartTruncatedPath path={file.path} className="flex-1" />
+          <li key={file.path}>
+            <button
+              type="button"
+              className="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 text-left font-mono text-xs hover:bg-accent/50"
+              aria-label={`Open diff of ${file.path}`}
+              onClick={() => onOpenCommitFile(sha, file.path)}
+            >
+              <span className="w-3 shrink-0 text-muted-foreground">
+                {COMMIT_FILE_STATUS_LETTER[file.status]}
+              </span>
+              <StartTruncatedPath path={file.path} className="flex-1" />
+            </button>
           </li>
         ))}
       </ul>
@@ -81,10 +91,12 @@ function CommitRow({
   environmentId,
   cwd,
   commit,
+  onOpenCommitFile,
 }: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly commit: VcsCommit;
+  readonly onOpenCommitFile: OpenCommitFile;
 }) {
   const [expanded, setExpanded] = useState(false);
   const refs = orderCommitRefs(commit.refs);
@@ -128,7 +140,14 @@ function CommitRow({
           </span>
         </span>
       </button>
-      {expanded ? <CommitFiles environmentId={environmentId} cwd={cwd} sha={commit.sha} /> : null}
+      {expanded ? (
+        <CommitFiles
+          environmentId={environmentId}
+          cwd={cwd}
+          sha={commit.sha}
+          onOpenCommitFile={onOpenCommitFile}
+        />
+      ) : null}
     </li>
   );
 }
@@ -138,10 +157,12 @@ function CommitPage({
   environmentId,
   gitCwd,
   cursor,
+  onOpenCommitFile,
 }: {
   readonly environmentId: EnvironmentId;
   readonly gitCwd: string;
   readonly cursor: number | undefined;
+  readonly onOpenCommitFile: OpenCommitFile;
 }) {
   const [showNext, setShowNext] = useState(false);
   const page = useEnvironmentQuery(
@@ -170,12 +191,18 @@ function CommitPage({
               environmentId={environmentId}
               cwd={gitCwd}
               commit={commit}
+              onOpenCommitFile={onOpenCommitFile}
             />
           ))}
         </ul>
       )}
       {nextCursor === null ? null : showNext ? (
-        <CommitPage environmentId={environmentId} gitCwd={gitCwd} cursor={nextCursor} />
+        <CommitPage
+          environmentId={environmentId}
+          gitCwd={gitCwd}
+          cursor={nextCursor}
+          onOpenCommitFile={onOpenCommitFile}
+        />
       ) : (
         <Button size="xs" variant="ghost" className="w-full" onClick={() => setShowNext(true)}>
           Load more
@@ -188,9 +215,11 @@ function CommitPage({
 export function SourceControlCommits({
   environmentId,
   gitCwd,
+  onOpenCommitFile,
 }: {
   readonly environmentId: EnvironmentId;
   readonly gitCwd: string;
+  readonly onOpenCommitFile: OpenCommitFile;
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -209,7 +238,12 @@ export function SourceControlCommits({
       </button>
       {expanded ? (
         <ScrollArea className="max-h-72">
-          <CommitPage environmentId={environmentId} gitCwd={gitCwd} cursor={undefined} />
+          <CommitPage
+            environmentId={environmentId}
+            gitCwd={gitCwd}
+            cursor={undefined}
+            onOpenCommitFile={onOpenCommitFile}
+          />
         </ScrollArea>
       ) : null}
     </section>

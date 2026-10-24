@@ -26,6 +26,7 @@ import {
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
+  GitCommitSha,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
@@ -3175,6 +3176,36 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef, insertions, deletions };
   }, Effect.scoped);
 
+  // The parent is worked out here, never taken from the client. A root commit has none.
+  const resolveReviewCommit = Effect.fn("resolveReviewCommit")(function* (
+    cwd: string,
+    revision: string,
+    operation: string,
+  ) {
+    if (!Schema.is(GitCommitSha)(revision)) {
+      return yield* new GitCommandError({
+        operation,
+        command: "git rev-parse",
+        cwd,
+        detail: "Not a commit hash.",
+      });
+    }
+    const readCommit = (spec: string) =>
+      executeGit(`${operation}.commit`, cwd, ["rev-parse", "--verify", "--quiet", spec], {
+        allowNonZeroExit: true,
+      }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
+    const sha = yield* readCommit(`${revision}^{commit}`);
+    if (sha === null) {
+      return yield* new GitCommandError({
+        operation,
+        command: "git rev-parse",
+        cwd,
+        detail: "Commit not found.",
+      });
+    }
+    return { sha, parent: yield* readCommit(`${sha}^1^{commit}`) };
+  });
+
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
@@ -3201,17 +3232,75 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
+    const diffArgs = [
+      ...REVIEW_DIFF_ARGS,
+      "--minimal",
+      ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+    ];
+    const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
+      crypto.digest("SHA-256", new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
+        Effect.map(Hex.encode),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.getReviewDiffPreview.hash",
+              command: "crypto.digest SHA-256",
+              cwd,
+              detail: "Failed to hash review diff.",
+              cause,
+            }),
+        ),
+      );
+
+    if (input.commit !== undefined) {
+      const commit = yield* resolveReviewCommit(
+        cwd,
+        input.commit,
+        "GitVcsDriver.getReviewDiffPreview",
+      );
+      const baseRef = commit.parent ?? (yield* readEmptyTreeHash(cwd));
+      const range = [baseRef, commit.sha, "--", ...pathArgs];
+      const stat = yield* runGitStdoutWithOptions(
+        "GitVcsDriver.getReviewDiffPreview.commitStat",
+        cwd,
+        [...diffArgs, "--numstat", "-z", ...range],
+        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+      );
+      const files = parseReviewNumstat(stat);
+      const patch =
+        files.length === 0
+          ? { stdout: "", stdoutTruncated: false }
+          : yield* executeGit(
+              "GitVcsDriver.getReviewDiffPreview.commitPatch",
+              cwd,
+              [...diffArgs, "--patch", ...range],
+              { maxOutputBytes: patchLimit, appendTruncationMarker: true },
+            );
+      return {
+        cwd: input.cwd,
+        generatedAt: yield* DateTime.now,
+        sources: [
+          {
+            id: "commit",
+            kind: "commit" as const,
+            title: `Commit ${commit.sha.slice(0, 7)}`,
+            baseRef,
+            headRef: commit.sha,
+            diff: patch.stdout,
+            files,
+            diffHash: yield* hashDiff(patch.stdout, files),
+            truncated: patch.stdoutTruncated,
+          },
+        ],
+      };
+    }
+
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
       input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
-    const diffArgs = [
-      ...REVIEW_DIFF_ARGS,
-      "--minimal",
-      ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
-    ];
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
       ref: string,
       env?: NodeJS.ProcessEnv,
@@ -3280,20 +3369,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const baseFiles = baseResult.files;
     const dirtyDiff = dirtyTrackedResult.stdout;
     const baseDiff = baseResult.stdout;
-    const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
-      crypto.digest("SHA-256", new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
-        Effect.map(Hex.encode),
-        Effect.mapError(
-          (cause) =>
-            new GitCommandError({
-              operation: "GitVcsDriver.getReviewDiffPreview.hash",
-              command: "crypto.digest SHA-256",
-              cwd,
-              detail: "Failed to hash review diff.",
-              cause,
-            }),
-        ),
-      );
     const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff, dirtyFiles ?? []),
       hashDiff(baseDiff, baseFiles ?? []),
@@ -3444,6 +3519,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((value) => value.trim()));
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
+    }
+    if (input.sourceKind === "commit") {
+      const commit = yield* resolveReviewCommit(
+        input.cwd,
+        input.headRef ?? "",
+        "GitVcsDriver.getReviewDiffFileContents",
+      );
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new" || commit.parent === null
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, commit.parent, input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, commit.sha, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
     }
     const oldRevision =
       input.sourceKind === "working-tree"

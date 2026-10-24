@@ -56,4 +56,23 @@ describe("diffPanelStore", () => {
       revealRequestId: 2,
     });
   });
+
+  it("selects a commit's file without persisting the selection", () => {
+    const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("commit-thread"));
+    const select = () =>
+      useDiffPanelStore.getState().selectCommitFile(ref, "abc1234", "src/app.ts");
+    select();
+    select();
+
+    expect(useDiffPanelStore.getState().byThreadKey["env:commit-thread"]).toEqual({
+      kind: "commit",
+      sha: "abc1234",
+      filePath: "src/app.ts",
+      revealRequestId: 2,
+    });
+    const persisted = useDiffPanelStore.persist.getOptions().partialize!(
+      useDiffPanelStore.getState(),
+    );
+    expect(persisted.byThreadKey).not.toHaveProperty("env:commit-thread");
+  });
 });

@@ -53,7 +53,7 @@ function CommitMessageBox({
 export default function SourceControlPanel(props: {
   readonly threadRef: ScopedThreadRef;
   readonly gitCwd: string | null;
-  readonly onOpenFileDiff: (filePath: string) => void;
+  readonly onOpenFileDiff: (filePath: string, commitSha?: string) => void;
 }) {
   const { threadRef, gitCwd, onOpenFileDiff } = props;
   const canWrite = useEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope);
@@ -147,7 +147,11 @@ export default function SourceControlPanel(props: {
               />
             </ScrollArea>
           )}
-          <SourceControlCommits environmentId={threadRef.environmentId} gitCwd={gitCwd} />
+          <SourceControlCommits
+            environmentId={threadRef.environmentId}
+            gitCwd={gitCwd}
+            onOpenCommitFile={(sha, filePath) => onOpenFileDiff(filePath, sha)}
+          />
         </>
       )}
     </div>

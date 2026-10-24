@@ -1860,6 +1860,112 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("diffs a commit against its first parent, a merge and a root commit included", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const rev = (spec: string) =>
+          git(cwd, ["rev-parse", spec]).pipe(Effect.map((out) => out.trim()));
+        const root = yield* rev("HEAD");
+        yield* git(cwd, ["switch", "-c", "side"]);
+        yield* writeTextFile(cwd, "side.txt", "side\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "side"]);
+        yield* git(cwd, ["switch", initialBranch]);
+        yield* writeTextFile(cwd, "README.md", "# test\nmore\n");
+        yield* git(cwd, ["commit", "-am", "edit readme"]);
+        const edit = yield* rev("HEAD");
+        yield* git(cwd, ["merge", "--no-ff", "side", "-m", "merge side"]);
+        const merge = yield* rev("HEAD");
+
+        const normal = (yield* driver.getReviewDiffPreview({ cwd, commit: edit })).sources;
+        assert.deepStrictEqual(
+          normal.map((source) => [source.kind, source.baseRef, source.headRef]),
+          [["commit", root, edit]],
+        );
+        assert.deepStrictEqual(normal[0]!.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(normal[0]!.diff, "+more");
+
+        const rootDiff = (yield* driver.getReviewDiffPreview({ cwd, commit: root })).sources[0]!;
+        assert.deepStrictEqual(
+          rootDiff.files?.map((file) => file.path),
+          ["README.md"],
+        );
+        assert.include(rootDiff.diff, "+# test");
+
+        const merged = (yield* driver.getReviewDiffPreview({ cwd, commit: merge })).sources[0]!;
+        assert.strictEqual(merged.baseRef, edit);
+        assert.deepStrictEqual(
+          merged.files?.map((file) => file.path),
+          ["side.txt"],
+        );
+
+        const scoped = (yield* driver.getReviewDiffPreview({
+          cwd,
+          commit: edit,
+          file: { path: "README.md", previousPath: null, sourceKind: "commit" },
+        })).sources[0]!;
+        assert.deepStrictEqual(
+          scoped.files?.map((file) => file.path),
+          ["README.md"],
+        );
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: null,
+            headRef: edit,
+            oldPath: "README.md",
+            newPath: "README.md",
+          }),
+        );
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# test\nmore\n");
+
+        const rootContents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: null,
+            headRef: root,
+            changeType: "new",
+          }),
+        );
+        assert.strictEqual(rootContents.oldContents, "");
+        assert.strictEqual(rootContents.newContents, "# test\n");
+      }),
+    );
+
+    it.effect("refuses a commit that is not a hex hash or does not exist", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        for (const commit of [
+          "--output=/tmp/pwned",
+          "HEAD",
+          "main~1",
+          "abc",
+          "0123456789abcdef0123456789abcdef01234567",
+        ]) {
+          const error = yield* driver.getReviewDiffPreview({ cwd, commit }).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          const contentsError = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "commit",
+                baseRef: null,
+                headRef: commit,
+              }),
+            )
+            .pipe(Effect.flip);
+          assert.strictEqual(contentsError._tag, "GitCommandError");
+        }
+      }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
