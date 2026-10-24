@@ -1,6 +1,5 @@
-import type { EnvironmentId, VcsCommit } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, VcsCommit, VcsCommitFile } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -12,6 +11,10 @@ import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { StartTruncatedPath } from "../StartTruncatedPath";
 import { COMMIT_FILE_STATUS_LETTER, orderCommitRefs } from "./sourceControlCommits.logic";
+import {
+  readSourceControlCommitsUi,
+  useSourceControlCommitsStore,
+} from "./sourceControlCommitsStore";
 
 const VISIBLE_REFS = 2;
 const REF_BADGE_VARIANT = {
@@ -38,7 +41,7 @@ function QueryError({
   );
 }
 
-type OpenCommitFile = (sha: string, filePath: string) => void;
+type OpenCommitFile = (sha: string, file: VcsCommitFile) => void;
 
 function CommitFiles({
   environmentId,
@@ -70,7 +73,7 @@ function CommitFiles({
               type="button"
               className="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 text-left font-mono text-xs hover:bg-accent/50"
               aria-label={`Open diff of ${file.path}`}
-              onClick={() => onOpenCommitFile(sha, file.path)}
+              onClick={() => onOpenCommitFile(sha, file)}
             >
               <span className="w-3 shrink-0 text-muted-foreground">
                 {COMMIT_FILE_STATUS_LETTER[file.status]}
@@ -88,17 +91,19 @@ function CommitFiles({
 }
 
 function CommitRow({
-  environmentId,
+  threadRef,
   cwd,
   commit,
   onOpenCommitFile,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
   readonly cwd: string;
   readonly commit: VcsCommit;
   readonly onOpenCommitFile: OpenCommitFile;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const expanded = useSourceControlCommitsStore((state) =>
+    readSourceControlCommitsUi(state.byThreadKey, threadRef).expandedShas.includes(commit.sha),
+  );
   const refs = orderCommitRefs(commit.refs);
   return (
     <li>
@@ -106,7 +111,9 @@ function CommitRow({
         type="button"
         aria-expanded={expanded}
         className="flex w-full cursor-pointer items-start gap-1 rounded-md px-0.5 py-1 text-left hover:bg-accent/50"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() =>
+          useSourceControlCommitsStore.getState().toggleExpanded(threadRef, commit.sha)
+        }
       >
         <ChevronRightIcon
           aria-hidden
@@ -142,7 +149,7 @@ function CommitRow({
       </button>
       {expanded ? (
         <CommitFiles
-          environmentId={environmentId}
+          environmentId={threadRef.environmentId}
           cwd={cwd}
           sha={commit.sha}
           onOpenCommitFile={onOpenCommitFile}
@@ -154,20 +161,24 @@ function CommitRow({
 
 // Each page asks for the next one only on request. The log query refetches when HEAD moves.
 function CommitPage({
-  environmentId,
+  threadRef,
   gitCwd,
   cursor,
+  pageIndex,
   onOpenCommitFile,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
   readonly gitCwd: string;
   readonly cursor: number | undefined;
+  readonly pageIndex: number;
   readonly onOpenCommitFile: OpenCommitFile;
 }) {
-  const [showNext, setShowNext] = useState(false);
+  const showNext = useSourceControlCommitsStore(
+    (state) => readSourceControlCommitsUi(state.byThreadKey, threadRef).pages > pageIndex + 1,
+  );
   const page = useEnvironmentQuery(
     vcsEnvironment.log({
-      environmentId,
+      environmentId: threadRef.environmentId,
       input: { cwd: gitCwd, ...(cursor === undefined ? {} : { cursor }) },
     }),
   );
@@ -188,7 +199,7 @@ function CommitPage({
           {commits.map((commit) => (
             <CommitRow
               key={commit.sha}
-              environmentId={environmentId}
+              threadRef={threadRef}
               cwd={gitCwd}
               commit={commit}
               onOpenCommitFile={onOpenCommitFile}
@@ -198,13 +209,19 @@ function CommitPage({
       )}
       {nextCursor === null ? null : showNext ? (
         <CommitPage
-          environmentId={environmentId}
+          threadRef={threadRef}
           gitCwd={gitCwd}
           cursor={nextCursor}
+          pageIndex={pageIndex + 1}
           onOpenCommitFile={onOpenCommitFile}
         />
       ) : (
-        <Button size="xs" variant="ghost" className="w-full" onClick={() => setShowNext(true)}>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="w-full"
+          onClick={() => useSourceControlCommitsStore.getState().setPages(threadRef, pageIndex + 2)}
+        >
           Load more
         </Button>
       )}
@@ -213,22 +230,24 @@ function CommitPage({
 }
 
 export function SourceControlCommits({
-  environmentId,
+  threadRef,
   gitCwd,
   onOpenCommitFile,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
   readonly gitCwd: string;
   readonly onOpenCommitFile: OpenCommitFile;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const expanded = useSourceControlCommitsStore(
+    (state) => readSourceControlCommitsUi(state.byThreadKey, threadRef).open,
+  );
   return (
     <section aria-label="Commits" className="flex min-h-0 shrink-0 flex-col border-t pt-1">
       <button
         type="button"
         aria-expanded={expanded}
         className="flex cursor-pointer items-center gap-1 rounded-md px-0.5 py-1 text-left font-medium text-muted-foreground text-xs"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => useSourceControlCommitsStore.getState().setOpen(threadRef, !expanded)}
       >
         <ChevronRightIcon
           aria-hidden
@@ -239,9 +258,10 @@ export function SourceControlCommits({
       {expanded ? (
         <ScrollArea className="max-h-72">
           <CommitPage
-            environmentId={environmentId}
+            threadRef={threadRef}
             gitCwd={gitCwd}
             cursor={undefined}
+            pageIndex={0}
             onOpenCommitFile={onOpenCommitFile}
           />
         </ScrollArea>

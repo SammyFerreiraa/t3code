@@ -76,7 +76,11 @@ export function RightPanelSurfaceContent(props: {
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   readonly gitCwd: string | null;
-  readonly onOpenWorkingTreeFileDiff: (filePath: string, commitSha?: string) => void;
+  readonly onOpenWorkingTreeFileDiff: (
+    filePath: string,
+    commitSha?: string,
+    previousPath?: string | null,
+  ) => void;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
