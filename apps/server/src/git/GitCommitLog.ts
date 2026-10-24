@@ -18,6 +18,8 @@ type Git = GitVcsDriver.GitVcsDriver["Service"];
 
 const DEFAULT_LIMIT = 30;
 const MAX_COMMIT_FILES = 500;
+// Room for MAX_COMMIT_FILES long paths; a commit with more is cut here instead of failing.
+const COMMIT_FILES_MAX_OUTPUT_BYTES = 256_000;
 const FIELD_SEPARATOR = "\x1f";
 
 const isCommitSha = Schema.is(GitCommitSha);
@@ -52,7 +54,8 @@ const parseRefs = (decoration: string): VcsCommitRef[] => {
 };
 
 // Commits are NUL-separated and fields are unit-separated. The subject is last and rejoined,
-// so even a subject holding a unit separator survives.
+// so a subject holding a unit separator survives. An author name holding one would shift the
+// fields; git does not strip control characters from a name, but no real history has one.
 const parseCommits = (stdout: string): VcsCommit[] =>
   stdout.split("\0").flatMap((record) => {
     const [sha, shortSha, authorName, authoredAt, decoration, ...subject] =
@@ -129,17 +132,20 @@ const STATUS_BY_LETTER = {
 } as const satisfies Record<string, VcsCommitFile["status"]>;
 
 // `--name-status -z` prints `<status>\0<path>\0`, and renames and copies add a second path.
-const parseNameStatus = (stdout: string): VcsCommitFile[] => {
+export const parseNameStatus = (stdout: string, truncated: boolean): VcsCommitFile[] => {
   const tokens = stdout.split("\0");
+  // The cut can land inside a path, so the last token cannot be trusted.
+  if (truncated) tokens.pop();
   const files: VcsCommitFile[] = [];
   for (let index = 0; index < tokens.length;) {
     const code = tokens[index++] ?? "";
     const letter = code[0] as keyof typeof STATUS_BY_LETTER | undefined;
     const status = letter ? STATUS_BY_LETTER[letter] : undefined;
-    if (!status) continue;
     const hasSource = letter === "R" || letter === "C";
     const first = tokens[index++];
     const second = hasSource ? tokens[index++] : undefined;
+    // An unknown code still owns its path token, or the path would be read as the next code.
+    if (!status) continue;
     const path = hasSource ? second : first;
     if (!path) continue;
     files.push({ path, previousPath: hasSource && first ? first : null, status });
@@ -151,6 +157,7 @@ const parseNameStatus = (stdout: string): VcsCommitFile[] => {
 export const readCommitFiles = Effect.fn("GitCommitLog.readCommitFiles")(function* (
   git: Git,
   input: VcsCommitFilesInput,
+  maxOutputBytes = COMMIT_FILES_MAX_OUTPUT_BYTES,
 ) {
   const operation = "GitCommitLog.readCommitFiles";
   if (!isCommitSha(input.sha)) {
@@ -174,6 +181,8 @@ export const readCommitFiles = Effect.fn("GitCommitLog.readCommitFiles")(functio
       "--",
     ],
     allowNonZeroExit: true,
+    maxOutputBytes,
+    appendTruncationMarker: true,
   });
   if (result.exitCode !== 0) {
     return yield* failure(
@@ -183,9 +192,9 @@ export const readCommitFiles = Effect.fn("GitCommitLog.readCommitFiles")(functio
       result.exitCode,
     );
   }
-  const files = parseNameStatus(result.stdout);
+  const files = parseNameStatus(result.stdout, result.stdoutTruncated);
   return {
     files: files.slice(0, MAX_COMMIT_FILES),
-    truncated: files.length > MAX_COMMIT_FILES,
+    truncated: result.stdoutTruncated || files.length > MAX_COMMIT_FILES,
   } satisfies VcsCommitFilesResult;
 });

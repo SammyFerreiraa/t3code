@@ -179,6 +179,33 @@ it.layer(layer)("GitCommitLog", (it) => {
     }),
   );
 
+  it.effect("cuts a commit with more output than the limit instead of failing", () =>
+    Effect.gen(function* () {
+      const { cwd, driver, commit, fileSystem, path } = yield* setupRepo;
+      for (let n = 0; n < 40; n++) {
+        yield* fileSystem.writeFileString(path.join(cwd, `a-long-file-name-${n}.txt`), "x\n");
+      }
+      const sha = yield* commit("last.txt", "many files");
+
+      const result = yield* GitCommitLog.readCommitFiles(driver, { cwd, sha }, 200);
+      assert.isTrue(result.truncated);
+      assert.isAbove(result.files.length, 0);
+      assert.isBelow(result.files.length, 41);
+      // The record the cut landed in is dropped, so every path is a whole one.
+      for (const file of result.files) {
+        assert.match(file.path, /^(a-long-file-name-\d+|last)\.txt$/);
+      }
+    }),
+  );
+
+  it.effect("reads the path of an unknown status code as its own", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(GitCommitLog.parseNameStatus("X\0Makefile\0M\0real.txt\0", false), [
+        { path: "real.txt", previousPath: null, status: "modified" },
+      ]);
+    }),
+  );
+
   it.effect("refuses anything that is not a hex commit hash", () =>
     Effect.gen(function* () {
       const { cwd, driver, commit } = yield* setupRepo;

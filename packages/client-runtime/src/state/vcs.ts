@@ -304,10 +304,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsLog,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId, input }) =>
-        Atom.map(
-          status({ environmentId, input: { cwd: input.cwd } }),
-          (result) => Option.getOrNull(AsyncResult.value(result))?.headSha ?? null,
-        ),
+        // A push or fetch moves origin/x without moving HEAD; it shows in ahead and behind.
+        Atom.map(status({ environmentId, input: { cwd: input.cwd } }), (result) => {
+          const current = Option.getOrNull(AsyncResult.value(result));
+          return current === null
+            ? null
+            : `${current.headSha ?? ""}:${current.aheadCount}:${current.behindCount}`;
+        }),
     }),
     // A commit never changes, so its file list stays fresh for as long as it is cached.
     commitFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
