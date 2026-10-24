@@ -624,13 +624,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
             const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
-            const pullRequestActive =
-              activePanel === "pull-request" || activePanel === "pull-requests";
+            // A commit message is likely being written on Source Control; do not take the tab.
+            const keepsActivePanel =
+              activePanel === "pull-request" ||
+              activePanel === "pull-requests" ||
+              activePanel === "source-control";
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
                 expectedUserActionRevision &&
               activePanel !== "diff" &&
-              !pullRequestActive;
+              !keepsActivePanel;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
               ...(opened ? upsertSurface(thread, singletonSurface("diff")) : thread),

@@ -42,6 +42,10 @@ describe("resolveCommitFilePaths", () => {
     expect(resolveCommitFilePaths(files, new Set())).toBeNull();
   });
 
+  it("ignores exclusions for files that are no longer changed", () => {
+    expect(resolveCommitFilePaths(files, new Set(["gone.ts"]))).toBeNull();
+  });
+
   it("sends only the files that stay selected", () => {
     expect(resolveCommitFilePaths(files, new Set(["a.ts"]))).toEqual(["b.ts"]);
     expect(resolveCommitFilePaths(files, new Set(["a.ts", "b.ts"]))).toEqual([]);
@@ -84,6 +88,17 @@ describe("resolveSourceControlMenuExtras", () => {
       "commit_push",
       "pull",
     ]);
+  });
+
+  it("offers no PR from the default ref", () => {
+    const ids = resolveSourceControlMenuExtras(status({ isDefaultRef: true }), false, true).map(
+      (item) => item.id,
+    );
+    expect(ids).toEqual(["commit_push", "pull"]);
+  });
+
+  it("refuses to pull a diverged branch, like the header", () => {
+    expect(reason(status({ aheadCount: 1, behindCount: 1 }), "pull")).toMatch(/diverged/);
   });
 
   it("allows pull only when behind an upstream", () => {

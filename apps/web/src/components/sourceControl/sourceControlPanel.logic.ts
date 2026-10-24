@@ -5,7 +5,8 @@ type ChangedFile = VcsStatusResult["workingTree"]["files"][number];
 
 /** What the Source Control tab hands the git actions control so commits use its message and selection. */
 export interface SourceControlCommitDraft {
-  readonly message: string;
+  /** Read on click, so typing never re-renders the git actions control. */
+  readonly getMessage: () => string;
   readonly filePaths: string[] | null;
   readonly onCommitted: () => void;
 }
@@ -25,8 +26,8 @@ export function resolveCommitFilePaths(
   files: ReadonlyArray<ChangedFile>,
   excluded: ReadonlySet<string>,
 ): string[] | null {
-  if (excluded.size === 0) return null;
-  return files.filter((file) => !excluded.has(file.path)).map((file) => file.path);
+  const kept = files.filter((file) => !excluded.has(file.path));
+  return kept.length === files.length ? null : kept.map((file) => file.path);
 }
 
 export interface SourceControlMenuExtra {
@@ -72,7 +73,8 @@ export function resolveSourceControlMenuExtras(
       disabledReason: commitReason,
     },
   ];
-  if (status.pr?.state !== "open") {
+  // The header commits straight to the default ref there, so a PR from it makes no sense.
+  if (status.pr?.state !== "open" && !status.isDefaultRef) {
     extras.push({
       id: "commit_push_pr",
       label: `Commit, push & ${terminology.shortLabel}`,
@@ -88,9 +90,11 @@ export function resolveSourceControlMenuExtras(
       busy ??
       (!status.hasUpstream
         ? "This branch has no upstream to pull from."
-        : !isBehind
-          ? "Branch is not behind upstream."
-          : null),
+        : status.aheadCount > 0 && isBehind
+          ? "Branch has diverged from upstream. Rebase/merge first."
+          : !isBehind
+            ? "Branch is not behind upstream."
+            : null),
   });
   return extras;
 }

@@ -234,11 +234,13 @@ function getMenuActionDisabledReason({
   gitStatus,
   isBusy,
   hasPrimaryRemote,
+  selectsNoFiles,
 }: {
   item: GitActionMenuItem;
   gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasPrimaryRemote: boolean;
+  selectsNoFiles: boolean;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
@@ -254,6 +256,7 @@ function getMenuActionDisabledReason({
     if (!hasChanges) {
       return "Worktree is clean. Make changes before committing.";
     }
+    if (selectsNoFiles) return "Select at least one file to commit.";
     return "Commit is currently unavailable.";
   }
 
@@ -1162,7 +1165,7 @@ export default function GitActionsControl({
     ) {
       return null;
     }
-    const message = commitDraft.message.trim();
+    const message = commitDraft.getMessage().trim();
     return {
       ...(message ? { commitMessage: message } : {}),
       ...(commitDraft.filePaths ? { filePaths: commitDraft.filePaths } : {}),
@@ -1514,7 +1517,6 @@ export default function GitActionsControl({
     }
     const draftArgs = commitDraftArgs("commit");
     if (draftArgs && commitDraft) {
-      if (commitDraft.filePaths?.length === 0) return;
       void runGitActionWithToast({ action: "commit", ...draftArgs });
       return;
     }
@@ -1586,12 +1588,15 @@ export default function GitActionsControl({
   };
   const gitItems = (
     <>
-      {gitActionMenuItems.map((item) => {
+      {gitActionMenuItems.map((baseItem) => {
+        const selectsNoFiles = baseItem.dialogAction === "commit" && draftSelectsNothing("commit");
+        const item = selectsNoFiles ? { ...baseItem, disabled: true } : baseItem;
         const disabledReason = getMenuActionDisabledReason({
           item,
           gitStatus: gitStatusForActions,
           isBusy: isGitActionRunning,
           hasPrimaryRemote,
+          selectsNoFiles,
         });
         if (item.disabled && disabledReason && presentation === "menu") {
           return (
@@ -1632,11 +1637,7 @@ export default function GitActionsControl({
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
             key={`${item.id}-${item.label}`}
-            disabled={
-              !canWriteSourceControl ||
-              item.disabled ||
-              (item.dialogAction === "commit" && draftSelectsNothing("commit"))
-            }
+            disabled={!canWriteSourceControl || item.disabled}
             onClick={() => {
               openDialogForMenuItem(item);
             }}
