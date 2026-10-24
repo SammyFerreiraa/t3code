@@ -2267,6 +2267,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
+    let headSha: string | null = null;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2279,6 +2280,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value.startsWith("(") ? null : value;
+        continue;
+      }
+      if (line.startsWith("# branch.oid ")) {
+        const value = line.slice("# branch.oid ".length).trim();
+        headSha = /^[0-9a-f]{7,64}$/.test(value) ? value : null;
         continue;
       }
       if (line.startsWith("# branch.upstream ")) {
@@ -2367,6 +2373,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       hasOriginRemote: hasPrimaryRemote,
       isDefaultBranch,
       ...(defaultBranches.defaultRef ? { defaultRef: defaultBranches.defaultRef } : {}),
+      ...(headSha ? { headSha } : {}),
       branch: refName,
       upstreamRef,
       hasWorkingTreeChanges,
@@ -2424,6 +2431,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,
         ...(details.defaultRef ? { defaultRef: details.defaultRef } : {}),
+        ...(details.headSha ? { headSha: details.headSha } : {}),
         refName: details.branch,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,

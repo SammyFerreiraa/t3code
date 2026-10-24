@@ -1151,6 +1151,7 @@ export const make = Effect.gen(function* () {
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       ...(details.defaultRef ? { defaultRef: details.defaultRef } : {}),
+      ...(details.headSha ? { headSha: details.headSha } : {}),
       refName: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,

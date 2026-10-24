@@ -164,6 +164,10 @@ merge first. Force push stops if the remote has commits you have not pulled, and
 on the default branch. Rebase needs a clean working tree. If it hits conflicts, T3 Code aborts it and
 leaves the branch as it was, so resolve those conflicts in a terminal.
 
+Expand **Commits** at the bottom of the tab to browse the current branch's history, newest first.
+Open a commit to see the files it changed; for a merge, that is the comparison with its first
+parent. These files do not open a diff yet.
+
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,

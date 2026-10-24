@@ -127,9 +127,13 @@ import {
   VcsCreateWorktreeResult,
   VcsIndexInput,
   VcsRebaseOntoDefaultResult,
+  VcsCommitFilesInput,
+  VcsCommitFilesResult,
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsLogInput,
+  VcsLogResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -440,6 +444,8 @@ export const WS_METHODS = {
   vcsUnstage: "vcs.unstage",
   vcsFetch: "vcs.fetch",
   vcsRebaseOntoDefault: "vcs.rebaseOntoDefault",
+  vcsLog: "vcs.log",
+  vcsCommitFiles: "vcs.commitFiles",
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
@@ -1468,6 +1474,18 @@ const WsVcsRebaseOntoDefaultRpc = Rpc.make(WS_METHODS.vcsRebaseOntoDefault, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsLogRpc = Rpc.make(WS_METHODS.vcsLog, {
+  payload: VcsLogInput,
+  success: VcsLogResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsCommitFilesRpc = Rpc.make(WS_METHODS.vcsCommitFiles, {
+  payload: VcsCommitFilesInput,
+  success: VcsCommitFilesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
   payload: ReviewDiffPreviewInput,
   success: ReviewDiffPreviewResult,
@@ -2064,6 +2082,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsUnstageRpc,
   WsVcsFetchRpc,
   WsVcsRebaseOntoDefaultRpc,
+  WsVcsLogRpc,
+  WsVcsCommitFilesRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

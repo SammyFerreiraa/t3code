@@ -240,6 +240,8 @@ const VcsStatusLocalShape = {
   isDefaultRef: Schema.Boolean,
   // The origin's default branch name, for labels. Absent when unknown or from older servers.
   defaultRef: Schema.optional(TrimmedNonEmptyStringSchema),
+  // Commit HEAD points at, so clients can tell when the history changed. Absent before the first commit.
+  headSha: Schema.optional(TrimmedNonEmptyStringSchema),
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
@@ -384,6 +386,61 @@ export const VcsRebaseOntoDefaultResult = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
 });
 export type VcsRebaseOntoDefaultResult = typeof VcsRebaseOntoDefaultResult.Type;
+
+const VCS_LOG_MAX_LIMIT = 100;
+export const VcsLogInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(VCS_LOG_MAX_LIMIT))),
+  // Number of commits already listed.
+  cursor: Schema.optional(NonNegativeInt),
+});
+export type VcsLogInput = typeof VcsLogInput.Type;
+
+export const VcsCommitRef = Schema.Struct({
+  name: TrimmedNonEmptyStringSchema,
+  // `head` is the checked-out branch, or HEAD itself when detached.
+  kind: Schema.Literals(["head", "branch", "remote", "tag"]),
+});
+export type VcsCommitRef = typeof VcsCommitRef.Type;
+
+export const VcsCommit = Schema.Struct({
+  sha: TrimmedNonEmptyStringSchema,
+  shortSha: TrimmedNonEmptyStringSchema,
+  subject: Schema.String,
+  authorName: Schema.String,
+  authoredAt: Schema.String,
+  refs: Schema.Array(VcsCommitRef),
+});
+export type VcsCommit = typeof VcsCommit.Type;
+
+export const VcsLogResult = Schema.Struct({
+  commits: Schema.Array(VcsCommit),
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+});
+export type VcsLogResult = typeof VcsLogResult.Type;
+
+// Hex only, so a client-supplied value can never read as a git option.
+export const GitCommitSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{7,64}$/));
+
+export const VcsCommitFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  sha: GitCommitSha,
+});
+export type VcsCommitFilesInput = typeof VcsCommitFilesInput.Type;
+
+export const VcsCommitFile = Schema.Struct({
+  path: GitFilePath,
+  previousPath: Schema.NullOr(GitFilePath),
+  status: Schema.Literals(["added", "modified", "deleted", "renamed", "copied", "typechange"]),
+});
+export type VcsCommitFile = typeof VcsCommitFile.Type;
+
+export const VcsCommitFilesResult = Schema.Struct({
+  files: Schema.Array(VcsCommitFile),
+  // A commit touching thousands of files lists only the first ones.
+  truncated: Schema.Boolean,
+});
+export type VcsCommitFilesResult = typeof VcsCommitFilesResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Only a fixed
 // reason reaches the error and its diagnostic suffix; newer, unknown reasons

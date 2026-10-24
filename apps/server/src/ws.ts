@@ -2937,6 +2937,8 @@ export const layerWsRpc = (
           gitWorkflow
             .rebaseOntoDefault(input.cwd)
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.vcsLog]: (input) => gitWorkflow.readLog(input),
+        [WS_METHODS.vcsCommitFiles]: (input) => gitWorkflow.readCommitFiles(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),

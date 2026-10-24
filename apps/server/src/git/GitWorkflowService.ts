@@ -29,8 +29,13 @@ import {
   type VcsStatusResult,
   type VcsIndexInput,
   type VcsRebaseOntoDefaultResult,
+  type VcsCommitFilesInput,
+  type VcsCommitFilesResult,
+  type VcsLogInput,
+  type VcsLogResult,
 } from "@t3tools/contracts";
 
+import * as GitCommitLog from "./GitCommitLog.ts";
 import * as GitIndexStaging from "./GitIndexStaging.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitRemoteSync from "./GitRemoteSync.ts";
@@ -66,6 +71,10 @@ export class GitWorkflowService extends Context.Service<
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly stagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
     readonly unstagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
+    readonly readLog: (input: VcsLogInput) => Effect.Effect<VcsLogResult, GitCommandError>;
+    readonly readCommitFiles: (
+      input: VcsCommitFilesInput,
+    ) => Effect.Effect<VcsCommitFilesResult, GitCommandError>;
     readonly fetchBranchRemote: (cwd: string) => Effect.Effect<void, GitCommandError>;
     readonly rebaseOntoDefault: (
       cwd: string,
@@ -387,6 +396,14 @@ export const make = Effect.gen(function* () {
     unstagePaths: (input) =>
       ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
         Effect.andThen(GitIndexStaging.unstagePaths(git, input)),
+      ),
+    readLog: (input) =>
+      ensureGitCommand("GitWorkflowService.readLog", input.cwd).pipe(
+        Effect.andThen(GitCommitLog.readLog(git, input)),
+      ),
+    readCommitFiles: (input) =>
+      ensureGitCommand("GitWorkflowService.readCommitFiles", input.cwd).pipe(
+        Effect.andThen(GitCommitLog.readCommitFiles(git, input)),
       ),
     fetchBranchRemote: (cwd) =>
       ensureGitCommand("GitWorkflowService.fetchBranchRemote", cwd).pipe(

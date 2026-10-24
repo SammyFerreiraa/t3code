@@ -78,6 +78,8 @@ export interface GitStatusDetails {
   isDefaultBranch: boolean;
   /** origin/HEAD's branch, else origin's main or master. */
   defaultRef?: string;
+  /** Commit HEAD points at; absent before the first commit. */
+  headSha?: string;
   branch: string | null;
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;

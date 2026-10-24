@@ -10,6 +10,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
 import GitActionsControl from "../GitActionsControl";
+import { SourceControlCommits } from "./SourceControlCommits";
 import { SourceControlFileSections } from "./SourceControlFileSections";
 import { readSourceControlDraft, useSourceControlDraftStore } from "./sourceControlDraftStore";
 import {
@@ -146,6 +147,7 @@ export default function SourceControlPanel(props: {
               />
             </ScrollArea>
           )}
+          <SourceControlCommits environmentId={threadRef.environmentId} gitCwd={gitCwd} />
         </>
       )}
     </div>

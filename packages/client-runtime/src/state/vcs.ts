@@ -13,10 +13,11 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -274,6 +275,21 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:vcs:status",
+    idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+      subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        Stream.mapAccum(
+          () => null as VcsStatusResult | null,
+          (current, event) => {
+            const next = applyGitStatusStreamEvent(current, event);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -282,20 +298,24 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
-      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
+    // One page of history. Refetches when HEAD moves, never by polling.
+    log: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:log",
+      tag: WS_METHODS.vcsLog,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        Atom.map(
+          status({ environmentId, input: { cwd: input.cwd } }),
+          (result) => Option.getOrNull(AsyncResult.value(result))?.headSha ?? null,
         ),
     }),
+    // A commit never changes, so its file list stays fresh for as long as it is cached.
+    commitFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:commit-files",
+      tag: WS_METHODS.vcsCommitFiles,
+      staleTimeMs: 30 * 60_000,
+    }),
+    status,
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,

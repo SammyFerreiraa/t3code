@@ -2808,6 +2808,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports the commit HEAD points at, and none before the first commit", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* makeTmpDir();
+        yield* driver.initRepo({ cwd });
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).headSha, undefined);
+
+        yield* initRepoWithCommit(cwd);
+        const head = (yield* git(cwd, ["rev-parse", "HEAD"])).trim();
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).headSha, head);
+      }),
+    );
+
     it.effect("makes background upstream status fetches non-interactive", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
