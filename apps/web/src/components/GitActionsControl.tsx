@@ -1577,7 +1577,7 @@ export default function GitActionsControl({
       case "rebase":
         if (
           await confirmDestructiveGitAction(
-            `Rebase ${branch} onto the default branch?\nThis fetches the remote's default branch and replays your commits on top. If they conflict, the rebase is aborted and nothing changes. A published branch then needs a force push.`,
+            `Rebase ${branch} onto ${gitStatusForActions?.defaultRef ?? "the default branch"}?\nThis fetches the remote's default branch and replays your commits on top. If they conflict, the rebase is aborted and nothing changes. A published branch then needs a force push.`,
           )
         ) {
           runWithResultToast({

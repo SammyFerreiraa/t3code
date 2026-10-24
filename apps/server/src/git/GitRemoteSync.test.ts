@@ -99,23 +99,27 @@ it.layer(layer)("GitRemoteSync", (it) => {
     }),
   );
 
-  it.effect("force push keeps commits pushed by someone else since the last fetch", () =>
-    Effect.gen(function* () {
-      const { driver, local, other, run, commit, publishFeature, remoteHead } = yield* setup;
-      yield* publishFeature;
-      yield* commit(other, "theirs.txt", "theirs\n", "theirs");
-      yield* run(other, "push");
-      const theirs = yield* run(other, "rev-parse", "HEAD");
-      yield* run(local, "commit", "--amend", "-m", "feature, reworded");
+  // The status poll fetches in the background, so the unfetched case is the rare one.
+  it.effect.each(["unfetched", "fetched"])(
+    "force push keeps commits it has not pulled (%s)",
+    (state) =>
+      Effect.gen(function* () {
+        const { driver, local, other, run, commit, publishFeature, remoteHead } = yield* setup;
+        yield* publishFeature;
+        yield* commit(other, "theirs.txt", "theirs\n", "theirs");
+        yield* run(other, "push");
+        const theirs = yield* run(other, "rev-parse", "HEAD");
+        if (state === "fetched") yield* run(local, "fetch", "origin");
+        yield* run(local, "commit", "--amend", "-m", "feature, reworded");
 
-      const error = yield* Effect.flip(GitRemoteSync.forcePushWithLease(driver, local));
+        const error = yield* Effect.flip(GitRemoteSync.forcePushWithLease(driver, local));
 
-      assert.include(error.detail, "changed since the last fetch");
-      assert.strictEqual(yield* remoteHead("feature"), theirs);
-    }),
+        assert.include(error.detail, "commits you have not pulled");
+        assert.strictEqual(yield* remoteHead("feature"), theirs);
+      }),
   );
 
-  it.effect("force push refuses the default branch and a branch tracking its base", () =>
+  it.effect("force push refuses the default branch and any upstream with another name", () =>
     Effect.gen(function* () {
       const { driver, local, run } = yield* setup;
       const onDefault = yield* Effect.flip(GitRemoteSync.forcePushWithLease(driver, local));
@@ -124,6 +128,11 @@ it.layer(layer)("GitRemoteSync", (it) => {
       yield* run(local, "switch", "-c", "topic", "--track", "origin/main");
       const onBase = yield* Effect.flip(GitRemoteSync.forcePushWithLease(driver, local));
       assert.include(onBase.detail, "tracks origin/main");
+
+      // Named like the remote-tracking ref, but it is not the default branch by name.
+      yield* run(local, "switch", "-c", "origin/main", "--track", "origin/main");
+      const aliased = yield* Effect.flip(GitRemoteSync.forcePushWithLease(driver, local));
+      assert.include(aliased.detail, "tracks origin/main");
     }),
   );
 

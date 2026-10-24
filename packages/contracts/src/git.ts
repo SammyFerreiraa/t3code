@@ -238,6 +238,8 @@ const VcsStatusLocalShape = {
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
   isDefaultRef: Schema.Boolean,
+  // The origin's default branch name, for labels. Absent when unknown or from older servers.
+  defaultRef: Schema.optional(TrimmedNonEmptyStringSchema),
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({

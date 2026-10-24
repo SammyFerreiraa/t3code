@@ -1150,6 +1150,7 @@ export const make = Effect.gen(function* () {
       ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
+      ...(details.defaultRef ? { defaultRef: details.defaultRef } : {}),
       refName: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
@@ -3233,6 +3234,19 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
                 Effect.flatMap(() => pushWithMode(input.cwd, currentBranch, input.pushMode)),
+                // A failed sync after a new commit must not read as if nothing happened.
+                Effect.mapError((error) =>
+                  input.pushMode === "sync" &&
+                  commit.status === "created" &&
+                  error._tag === "GitCommandError"
+                    ? new GitManagerError({
+                        operation: "runStackedAction",
+                        cwd: input.cwd,
+                        detail: `Committed locally; the sync did not finish. ${error.detail}`,
+                        cause: error,
+                      })
+                    : error,
+                ),
               )
           : { status: "skipped_not_requested" as const };
 

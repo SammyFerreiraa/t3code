@@ -159,6 +159,13 @@ describe("resolveSourceControlMenuExtras", () => {
     );
   });
 
+  it("names the default branch to rebase from when the server knows it", () => {
+    const label = (input: VcsStatusResult) =>
+      resolveSourceControlMenuExtras(input, false).find((item) => item.id === "rebase")?.label;
+    expect(label(status({ defaultRef: "develop" }))).toBe("Rebase from develop");
+    expect(label(status())).toBe("Rebase from default branch");
+  });
+
   it("fetches whenever a remote is reachable", () => {
     expect(reason(status({ refName: null }), "fetch")).toBeNull();
     expect(reason(status({ hasUpstream: false, hasPrimaryRemote: false }), "fetch")).toMatch(

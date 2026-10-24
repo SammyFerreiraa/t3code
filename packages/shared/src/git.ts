@@ -337,6 +337,7 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
       : {}),
     hasPrimaryRemote: status.hasPrimaryRemote,
     isDefaultRef: status.isDefaultRef,
+    ...(status.defaultRef ? { defaultRef: status.defaultRef } : {}),
     refName: status.refName,
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,
     workingTree: status.workingTree,

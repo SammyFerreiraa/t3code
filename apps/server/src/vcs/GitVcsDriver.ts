@@ -76,6 +76,8 @@ export interface GitStatusDetails {
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   hasOriginRemote: boolean;
   isDefaultBranch: boolean;
+  /** origin/HEAD's branch, else origin's main or master. */
+  defaultRef?: string;
   branch: string | null;
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;

@@ -57,8 +57,9 @@ export const fetchBranchRemote = Effect.fn("GitRemoteSync.fetchBranchRemote")(fu
 });
 
 /**
- * Overwrites the upstream with HEAD, but only while the upstream still matches the
- * remote-tracking ref, so commits pushed by someone else since the last fetch are never lost.
+ * Overwrites the upstream with HEAD, but only while every upstream commit is one this branch
+ * already had. The lease alone compares against the remote-tracking ref, which the background
+ * status fetch keeps current, so `--force-if-includes` is what keeps unpulled commits safe.
  */
 export const forcePushWithLease = Effect.fn("GitRemoteSync.forcePushWithLease")(function* (
   git: Git,
@@ -78,9 +79,10 @@ export const forcePushWithLease = Effect.fn("GitRemoteSync.forcePushWithLease")(
   if (remoteName === null || target === null) {
     return yield* failure(operation, cwd, "This branch has no upstream. Publish it first.");
   }
-  // A branch cut from `origin/main` tracks its base. Forcing HEAD there would rewrite a shared
-  // branch, so only a branch's own upstream can be overwritten.
-  if (target !== branch && branch !== `${remoteName}/${target}`) {
+  // A branch cut from `origin/main` tracks its base, and a local branch named `origin/main` can
+  // track main itself. Forcing HEAD there would rewrite a shared branch, so only an upstream with
+  // the branch's own name can be overwritten.
+  if (target !== branch) {
     return yield* failure(
       operation,
       cwd,
@@ -90,7 +92,14 @@ export const forcePushWithLease = Effect.fn("GitRemoteSync.forcePushWithLease")(
   const result = yield* git.execute({
     operation,
     cwd,
-    args: ["push", "--force-with-lease", "--", remoteName, `HEAD:refs/heads/${target}`],
+    args: [
+      "push",
+      "--force-with-lease",
+      "--force-if-includes",
+      "--",
+      remoteName,
+      `HEAD:refs/heads/${target}`,
+    ],
     allowNonZeroExit: true,
     timeoutMs: null,
   });
@@ -99,8 +108,8 @@ export const forcePushWithLease = Effect.fn("GitRemoteSync.forcePushWithLease")(
     return yield* failure(
       operation,
       cwd,
-      /\(stale info\)/.test(result.stderr)
-        ? "The remote branch changed since the last fetch. Fetch and review it, then force push again."
+      /\((?:stale info|remote ref updated since checkout)\)/.test(result.stderr)
+        ? "The remote branch has commits you have not pulled. Pull or rebase them in, then force push again."
         : "git push --force-with-lease failed.",
       result.exitCode,
     );
@@ -175,7 +184,7 @@ export const rebaseOntoDefault = Effect.fn("GitRemoteSync.rebaseOntoDefault")(fu
       cwd,
       abort.exitCode === 0
         ? `Rebasing onto ${baseRef} hit conflicts, so it was aborted and the branch is unchanged. Rebase in a terminal to resolve them.`
-        : "git rebase failed.",
+        : "git rebase failed. If a rebase is still in progress, run `git rebase --abort` in a terminal.",
       rebase.exitCode,
     );
   }).pipe(Effect.uninterruptible);

@@ -160,8 +160,8 @@ uses the project's instructions and recent commit subjects.
 The **Source Control** tab in the right panel stages files and commits like the header does. Its
 menu adds Fetch, Pull, Sync, Commit & sync, Publish branch, Force push, and Rebase from the default
 branch. Pull and Sync only fast-forward; if your branch and its upstream have diverged, rebase or
-merge first. Force push stops if someone pushed since your last fetch, and is not available on the
-default branch. Rebase needs a clean working tree. If it hits conflicts, T3 Code aborts it and
+merge first. Force push stops if the remote has commits you have not pulled, and is not available
+on the default branch. Rebase needs a clean working tree. If it hits conflicts, T3 Code aborts it and
 leaves the branch as it was, so resolve those conflicts in a terminal.
 
 ## Review and merge

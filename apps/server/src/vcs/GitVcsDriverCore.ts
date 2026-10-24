@@ -1536,7 +1536,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* executeGit(
+        const head = yield* executeGit(
           "GitVcsDriver.statusDetails.defaultBranch",
           fetchCwd,
           ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
@@ -1547,6 +1547,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
           }),
         );
+        if (head !== null) return { head, defaultRef: head };
+        // A remote added by hand has no origin/HEAD. `defaultRef` then guesses like the rebase
+        // does, while `head` stays null so isDefaultBranch keeps its name-only fallback.
+        const candidates = yield* executeGit(
+          "GitVcsDriver.statusDetails.defaultBranchCandidates",
+          fetchCwd,
+          [
+            "--git-dir",
+            gitCommonDir,
+            "for-each-ref",
+            "--format=%(refname:lstrip=3)",
+            "refs/remotes/origin/main",
+            "refs/remotes/origin/master",
+          ],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((result) => result.stdout.split("\n").map((line) => line.trim())));
+        return {
+          head,
+          defaultRef:
+            DEFAULT_BASE_BRANCH_CANDIDATES.find((name) => candidates.includes(name)) ?? null,
+        };
       }),
     {
       capacity: 2_048,
@@ -2164,7 +2185,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--numstat",
       "-z",
     ]).pipe(Effect.map(parseReviewNumstat));
-    const [numstat, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+    const [numstat, defaultBranches, hasPrimaryRemote] = yield* Effect.all(
       [
         Effect.all(
           [
@@ -2230,8 +2251,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           }),
         ),
         statusCacheKey
-          ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
-          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+          ? Cache.get(defaultBranchCache, statusCacheKey).pipe(
+              Effect.orElseSucceed(() => ({ head: null, defaultRef: null })),
+            )
+          : resolveDefaultBranchName(cwd, "origin").pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.map((head) => ({ head, defaultRef: head })),
+            ),
         statusCacheKey
           ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
           : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
@@ -2292,6 +2318,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       behindCount = 0;
     }
 
+    const defaultBranch = defaultBranches.head;
     const isDefaultBranch =
       refName !== null &&
       (refName === defaultBranch ||
@@ -2339,6 +2366,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       isRepo: true,
       hasOriginRemote: hasPrimaryRemote,
       isDefaultBranch,
+      ...(defaultBranches.defaultRef ? { defaultRef: defaultBranches.defaultRef } : {}),
       branch: refName,
       upstreamRef,
       hasWorkingTreeChanges,
@@ -2395,6 +2423,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         isRepo: details.isRepo,
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,
+        ...(details.defaultRef ? { defaultRef: details.defaultRef } : {}),
         refName: details.branch,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,

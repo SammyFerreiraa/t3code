@@ -152,7 +152,7 @@ export function resolveSourceControlMenuExtras(
     { id: "sync", label: "Sync", disabledReason: busy ?? detached ?? noUpstream ?? divergedReason },
     {
       id: "rebase",
-      label: "Rebase from default branch",
+      label: `Rebase from ${status.defaultRef ?? "default branch"}`,
       disabledReason:
         busy ??
         detached ??

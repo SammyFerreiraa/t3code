@@ -2808,6 +2808,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         }),
       );
 
+      expect(error.message).toContain("Committed locally; the sync did not finish.");
       expect(error.message).toContain("diverged. Rebase or merge first.");
       expect((yield* runGit(repoDir, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("mine");
       expect(

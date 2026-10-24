@@ -2774,6 +2774,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("names origin's default branch from origin HEAD, else main or master", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const makeClone = (branches: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+            yield* initRepoWithCommit(cwd);
+            yield* git(origin, ["init", "--bare"]);
+            yield* git(cwd, ["remote", "add", "origin", origin]);
+            for (const branch of branches) yield* git(cwd, ["push", "origin", `HEAD:${branch}`]);
+            yield* git(cwd, ["fetch", "origin"]);
+            yield* git(cwd, ["checkout", "-b", "feature"]);
+            return cwd;
+          });
+
+        const withHead = yield* makeClone(["develop", "main"]);
+        yield* git(withHead, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/develop",
+        ]);
+        assert.equal((yield* driver.statusDetailsLocal(withHead)).defaultRef, "develop");
+
+        const masterOnly = yield* makeClone(["master"]);
+        const status = yield* driver.statusDetailsLocal(masterOnly);
+        assert.equal(status.defaultRef, "master");
+        assert.equal(status.isDefaultBranch, false);
+
+        const noRemoteBranch = yield* makeClone([]);
+        assert.equal((yield* driver.statusDetailsLocal(noRemoteBranch)).defaultRef, undefined);
+      }),
+    );
+
     it.effect("makes background upstream status fetches non-interactive", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
