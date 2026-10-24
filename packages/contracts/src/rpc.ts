@@ -125,9 +125,15 @@ import {
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
+  VcsIndexInput,
+  VcsRebaseOntoDefaultResult,
+  VcsCommitFilesInput,
+  VcsCommitFilesResult,
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsLogInput,
+  VcsLogResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -434,6 +440,12 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsStage: "vcs.stage",
+  vcsUnstage: "vcs.unstage",
+  vcsFetch: "vcs.fetch",
+  vcsRebaseOntoDefault: "vcs.rebaseOntoDefault",
+  vcsLog: "vcs.log",
+  vcsCommitFiles: "vcs.commitFiles",
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
@@ -1441,6 +1453,39 @@ const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsStageRpc = Rpc.make(WS_METHODS.vcsStage, {
+  payload: VcsIndexInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsUnstageRpc = Rpc.make(WS_METHODS.vcsUnstage, {
+  payload: VcsIndexInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsFetchRpc = Rpc.make(WS_METHODS.vcsFetch, {
+  payload: VcsStatusInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsRebaseOntoDefaultRpc = Rpc.make(WS_METHODS.vcsRebaseOntoDefault, {
+  payload: VcsStatusInput,
+  success: VcsRebaseOntoDefaultResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsLogRpc = Rpc.make(WS_METHODS.vcsLog, {
+  payload: VcsLogInput,
+  success: VcsLogResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsCommitFilesRpc = Rpc.make(WS_METHODS.vcsCommitFiles, {
+  payload: VcsCommitFilesInput,
+  success: VcsCommitFilesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
   payload: ReviewDiffPreviewInput,
   success: ReviewDiffPreviewResult,
@@ -2033,6 +2078,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsStageRpc,
+  WsVcsUnstageRpc,
+  WsVcsFetchRpc,
+  WsVcsRebaseOntoDefaultRpc,
+  WsVcsLogRpc,
+  WsVcsCommitFilesRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

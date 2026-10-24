@@ -68,14 +68,18 @@ export function resolveGitActionProgressPresentation(input: {
 }): GitActionProgressPresentation | null {
   if (
     !input.isRunning ||
-    (input.operation !== "run_change_request" && input.operation !== "pull")
+    (input.operation !== "run_change_request" &&
+      input.operation !== "pull" &&
+      input.operation !== "fetch" &&
+      input.operation !== "rebase")
   ) {
     return null;
   }
 
   const currentLabel = input.currentLabel?.trim();
   const output = input.lastOutputLine?.trim();
-  const isPull = input.operation === "pull";
+  // Fetch and rebase report like a pull: one labelled step with no hook output.
+  const isPull = input.operation !== "run_change_request";
   return {
     status:
       currentLabel && currentLabel !== "Running source control action"

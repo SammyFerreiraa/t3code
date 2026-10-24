@@ -556,6 +556,8 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    stagedOnly?: boolean;
+    pushMode?: "publish" | "sync" | "force_with_lease";
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -2650,6 +2652,184 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("commits only the index, hunks included, when stagedOnly is set", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\nunstaged\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "new\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "staged only",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect((yield* runGit(repoDir, ["show", "HEAD:README.md"])).stdout).toBe("hello\nstaged\n");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+unstaged");
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toContain(
+        "?? untracked.txt",
+      );
+    }),
+  );
+
+  it.effect("skips a stagedOnly commit when nothing is staged", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nunstaged\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "nothing staged",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("skipped_no_changes");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+unstaged");
+    }),
+  );
+
+  it.effect("publishes a branch with no new commits and sets its upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["switch", "-c", "feature/publish"]);
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+        pushMode: "publish",
+      });
+
+      expect(result.push).toMatchObject({
+        status: "pushed",
+        upstreamBranch: "origin/feature/publish",
+        setUpstream: true,
+      });
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+      ).toBe("origin/feature/publish");
+    }),
+  );
+
+  it.effect("syncs by fast-forwarding from the upstream, then pushing", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const otherDir = yield* makeTempDir("t3code-git-manager-other-");
+      yield* runGit(otherDir, ["clone", remoteDir, "."]);
+      yield* runGit(otherDir, [
+        "-c",
+        "user.name=O",
+        "-c",
+        "user.email=o@o",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "theirs",
+      ]);
+      yield* runGit(otherDir, ["push", "origin", "HEAD:main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+      yield* runGit(repoDir, ["add", "mine.txt"]);
+
+      const { manager } = yield* makeManager();
+      // Behind only: the pull fast-forwards and there is nothing left to push.
+      const pulled = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+        pushMode: "sync",
+      });
+      expect(pulled.push.status).toBe("skipped_up_to_date");
+      expect((yield* runGit(repoDir, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("theirs");
+
+      // Commit & sync: the staged change is committed, the pull is a no-op, the push lands.
+      const committed = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push",
+        commitMessage: "mine",
+        stagedOnly: true,
+        pushMode: "sync",
+      });
+      expect(committed.commit.status).toBe("created");
+      expect(committed.push.status).toBe("pushed");
+      expect((yield* runGit(repoDir, ["ls-remote", "origin", "refs/heads/main"])).stdout).toContain(
+        committed.commit.commitSha ?? "missing",
+      );
+    }),
+  );
+
+  it.effect("commit and sync keeps the commit local when the upstream has diverged", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const otherDir = yield* makeTempDir("t3code-git-manager-other-");
+      yield* runGit(otherDir, ["clone", remoteDir, "."]);
+      yield* runGit(otherDir, [
+        "-c",
+        "user.name=O",
+        "-c",
+        "user.email=o@o",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "theirs",
+      ]);
+      yield* runGit(otherDir, ["push", "origin", "HEAD:main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nmine\n");
+
+      const { manager } = yield* makeManager();
+      const error = yield* Effect.flip(
+        runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push",
+          commitMessage: "mine",
+          pushMode: "sync",
+        }),
+      );
+
+      expect(error.message).toContain("Committed locally; the sync did not finish.");
+      expect(error.message).toContain("diverged. Rebase or merge first.");
+      expect((yield* runGit(repoDir, ["log", "-1", "--format=%s"])).stdout.trim()).toBe("mine");
+      expect(
+        (yield* runGit(otherDir, ["ls-remote", "origin", "refs/heads/main"])).stdout,
+      ).toContain((yield* runGit(otherDir, ["rev-parse", "HEAD"])).stdout.trim());
+    }),
+  );
+
+  it.effect("rejects a push mode on an action it does not apply to", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const { manager } = yield* makeManager();
+      const error = yield* Effect.flip(
+        runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push",
+          pushMode: "force_with_lease",
+        }),
+      );
+      expect(error.message).toContain("push mode is not supported");
     }),
   );
 

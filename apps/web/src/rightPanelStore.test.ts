@@ -60,6 +60,37 @@ describe("rightPanelStore", () => {
     ).toEqual(["device", "diff", pr.id]);
   });
 
+  it("does not let a finished turn's diff take over the Source Control tab", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "source-control");
+
+    expect(
+      store.openProactive(
+        refA,
+        { kind: "diff", turnId: RunId.make("turn-1") },
+        store.getUserActionRevision(refA),
+      ),
+    ).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "source-control",
+    );
+  });
+
+  it("reopens a closed Source Control tab", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "source-control");
+    store.closeSurface(refA, "source-control");
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("A Source Control tab must not create a browser session");
+      },
+    });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "source-control",
+    );
+  });
+
   it("reopens the active tab first after a bulk close", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");

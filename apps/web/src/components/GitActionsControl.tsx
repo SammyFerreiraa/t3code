@@ -7,10 +7,12 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  GitPushMode,
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
@@ -29,11 +31,13 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
@@ -90,13 +94,16 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
+  useVcsFetchAction,
   useVcsPullAction,
+  useVcsRebaseOntoDefaultAction,
 } from "~/lib/sourceControlActions";
 import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -116,10 +123,24 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
+import {
+  describeSourceControlError,
+  resolveSourceControlMenuExtras,
+  resolveSourceControlQuickAction,
+  type SourceControlCommitDraft,
+  type SourceControlMenuExtraId,
+} from "./sourceControl/sourceControlPanel.logic";
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+
+async function confirmDestructiveGitAction(message: string): Promise<boolean> {
+  return (
+    (await requestConfirmDialog(message, { variant: "destructive" })) ??
+    window.confirm(message.replace("\n", " "))
+  );
+}
 
 interface GitActionsControlProps {
   presentation?: "toolbar" | "menu";
@@ -130,6 +151,8 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  /** Set by the Source Control tab, which owns the commit message and the index. */
+  commitDraft?: SourceControlCommitDraft;
 }
 
 interface PendingDefaultBranchAction {
@@ -138,7 +161,10 @@ interface PendingDefaultBranchAction {
   includesCommit: boolean;
   commitMessage?: string;
   onConfirmed?: () => void;
+  onSucceeded?: () => void;
   filePaths?: string[];
+  stagedOnly?: boolean;
+  pushMode?: GitPushMode;
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -147,10 +173,13 @@ interface RunGitActionWithToastInput {
   action: GitStackedAction;
   commitMessage?: string;
   onConfirmed?: () => void;
+  onSucceeded?: () => void;
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
+  stagedOnly?: boolean;
+  pushMode?: GitPushMode;
 }
 
 interface InlineGitActionSuccess {
@@ -176,7 +205,14 @@ function requestVcsStatusRefresh(
   }
   void refresh({ environmentId, input: { cwd } });
 }
-const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const RUNNING_SOURCE_CONTROL_ACTIONS = [
+  "runStackedAction",
+  "pull",
+  "fetch",
+  "rebase",
+  "stage",
+  "publishRepository",
+] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = sourceControlClients.definitions.map((definition) => ({
   value: definition.kind,
@@ -962,6 +998,7 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  commitDraft,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1101,6 +1138,8 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
+  const fetchAction = useVcsFetchAction(sourceControlScope);
+  const rebaseAction = useVcsRebaseOntoDefaultAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
@@ -1139,12 +1178,30 @@ export default function GitActionsControl({
     isGitActionRunning,
     hasPrimaryRemote,
   );
-  const quickAction = resolveQuickAction(
+  const headerQuickAction = resolveQuickAction(
     gitStatusForActions,
     isGitActionRunning,
     isDefaultRef,
     hasPrimaryRemote,
   );
+  const quickAction = commitDraft
+    ? resolveSourceControlQuickAction(headerQuickAction, gitStatusForActions)
+    : headerQuickAction;
+  const commitDraftArgs = (action: GitStackedAction) => {
+    if (
+      !commitDraft ||
+      !gitStatusForActions?.hasWorkingTreeChanges ||
+      !action.startsWith("commit")
+    ) {
+      return null;
+    }
+    const message = commitDraft.getMessage().trim();
+    return {
+      ...(message ? { commitMessage: message } : {}),
+      ...(commitDraft.stagedOnly ? { stagedOnly: true } : {}),
+      onSucceeded: () => commitDraft.onCommitted(message),
+    };
+  };
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
     : quickAction.disabled
@@ -1208,10 +1265,13 @@ export default function GitActionsControl({
     action,
     commitMessage,
     onConfirmed,
+    onSucceeded,
     skipDefaultBranchPrompt = false,
     statusOverride,
     featureBranch = false,
     filePaths,
+    stagedOnly,
+    pushMode,
   }: RunGitActionWithToastInput) {
     if (
       activeEnvironmentId === null ||
@@ -1248,7 +1308,10 @@ export default function GitActionsControl({
         includesCommit,
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
+        ...(onSucceeded ? { onSucceeded } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(stagedOnly ? { stagedOnly } : {}),
+        ...(pushMode ? { pushMode } : {}),
       });
       return;
     }
@@ -1264,6 +1327,8 @@ export default function GitActionsControl({
       ...(commitMessage ? { commitMessage } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
+      ...(pushMode ? { pushMode } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
     });
@@ -1279,7 +1344,11 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: isPanel
+            ? describeSourceControlError(error)
+            : error instanceof Error
+              ? error.message
+              : "An error occurred.",
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
@@ -1289,6 +1358,7 @@ export default function GitActionsControl({
 
     const actionResult = result.value;
     syncThreadBranchAfterGitAction(actionResult);
+    onSucceeded?.();
     if (isPanel) {
       setInlineSuccess({
         title: actionResult.toast.title,
@@ -1363,13 +1433,17 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, onSucceeded, filePaths, stagedOnly, pushMode } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
+      ...(onSucceeded ? { onSucceeded } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
+      ...(pushMode ? { pushMode } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -1393,57 +1467,156 @@ export default function GitActionsControl({
     });
   };
 
+  const runWithResultToast = <A, E>(input: {
+    failureTitle: string;
+    run: () => Promise<AtomCommandResult<A, E>>;
+    describe: (value: A) => { title: string; description: string };
+  }) => {
+    void (async () => {
+      setInlineSuccess(null);
+      const result = await input.run();
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        const errorToastTiming = resolveGitActionResultToastTiming("error");
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: input.failureTitle,
+            description: isPanel
+              ? describeSourceControlError(error)
+              : error instanceof Error
+                ? error.message
+                : "An error occurred.",
+            timeout: errorToastTiming.timeout,
+            ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+          }),
+        );
+        return;
+      }
+
+      const { title, description } = input.describe(result.value);
+      if (isPanel) {
+        setInlineSuccess({ title, description, scopeKey: successScopeKey });
+        return;
+      }
+      const successToastTiming = resolveGitActionResultToastTiming("success");
+      toastManager.add({
+        type: "success",
+        title,
+        description,
+        timeout: successToastTiming.timeout,
+        data: {
+          ...threadToastData,
+          ...(successToastTiming.dismissAfterVisibleMs !== null
+            ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
+            : {}),
+        },
+      });
+    })();
+  };
+
+  const runPull = () =>
+    runWithResultToast({
+      failureTitle: "Pull failed",
+      run: pullAction.run,
+      describe: (pullResult) =>
+        pullResult.status === "pulled"
+          ? {
+              title: "Pulled",
+              description: `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`,
+            }
+          : {
+              title: "Already up to date",
+              description: `${pullResult.refName} is already synchronized.`,
+            },
+    });
+
+  const renderSourceControlExtraIcon = (id: SourceControlMenuExtraId) => {
+    switch (id) {
+      case "pull":
+      case "fetch":
+        return <CloudDownloadIcon />;
+      case "publish_branch":
+        return <CloudUploadIcon />;
+      case "sync":
+        return <RefreshCwIcon />;
+      case "rebase":
+        return <GitBranchIcon />;
+      default:
+        return (
+          <GitActionItemIcon
+            icon={id === "commit_push_pr" ? "pr" : "push"}
+            SourceControlIcon={SourceControlIcon}
+          />
+        );
+    }
+  };
+
+  const runSourceControlExtra = async (id: SourceControlMenuExtraId) => {
+    const branch = gitStatusForActions?.refName ?? "this branch";
+    switch (id) {
+      case "commit_push":
+      case "commit_push_pr":
+        return void runGitActionWithToast({ action: id, ...commitDraftArgs(id) });
+      case "commit_sync":
+        return void runGitActionWithToast({
+          action: "commit_push",
+          pushMode: "sync",
+          ...commitDraftArgs("commit_push"),
+        });
+      case "sync":
+        return void runGitActionWithToast({ action: "push", pushMode: "sync" });
+      case "publish_branch":
+        return void runGitActionWithToast({ action: "push", pushMode: "publish" });
+      case "force_push":
+        if (
+          await confirmDestructiveGitAction(
+            `Force push ${branch}?\nThis replaces the remote branch with your local history. It stops if the remote has commits you have not pulled.`,
+          )
+        ) {
+          void runGitActionWithToast({ action: "push", pushMode: "force_with_lease" });
+        }
+        return;
+      case "pull":
+        return runPull();
+      case "fetch":
+        return runWithResultToast({
+          failureTitle: "Fetch failed",
+          run: fetchAction.run,
+          describe: () => ({ title: "Fetched", description: "Remote branches are up to date." }),
+        });
+      case "rebase":
+        if (
+          await confirmDestructiveGitAction(
+            `Rebase ${branch} onto ${gitStatusForActions?.defaultRef ?? "the default branch"}?\nThis fetches the remote's default branch and replays your commits on top. If they conflict, the rebase is aborted and nothing changes. A published branch then needs a force push.`,
+          )
+        ) {
+          runWithResultToast({
+            failureTitle: "Rebase failed",
+            run: rebaseAction.run,
+            describe: (result) =>
+              result.status === "rebased"
+                ? { title: "Rebased", description: `${branch} now sits on ${result.baseRef}.` }
+                : {
+                    title: "Already up to date",
+                    description: `${branch} already contains ${result.baseRef}.`,
+                  },
+          });
+        }
+        return;
+    }
+  };
+
   const runQuickAction = () => {
     if (quickAction.kind === "open_publish") {
       setIsPublishDialogOpen(true);
       return;
     }
     if (quickAction.kind === "run_pull") {
-      void (async () => {
-        setInlineSuccess(null);
-        const result = await pullAction.run();
-        if (result._tag === "Failure") {
-          if (isAtomCommandInterrupted(result)) {
-            return;
-          }
-          const error = squashAtomCommandFailure(result);
-          const errorToastTiming = resolveGitActionResultToastTiming("error");
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Pull failed",
-              description: error instanceof Error ? error.message : "An error occurred.",
-              timeout: errorToastTiming.timeout,
-              ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-            }),
-          );
-          return;
-        }
-
-        const pullResult = result.value;
-        const title = pullResult.status === "pulled" ? "Pulled" : "Already up to date";
-        const description =
-          pullResult.status === "pulled"
-            ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
-            : `${pullResult.refName} is already synchronized.`;
-        if (isPanel) {
-          setInlineSuccess({ title, description, scopeKey: successScopeKey });
-          return;
-        }
-        const successToastTiming = resolveGitActionResultToastTiming("success");
-        toastManager.add({
-          type: "success",
-          title,
-          description,
-          timeout: successToastTiming.timeout,
-          data: {
-            ...threadToastData,
-            ...(successToastTiming.dismissAfterVisibleMs !== null
-              ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
-              : {}),
-          },
-        });
-      })();
+      runPull();
       return;
     }
     if (quickAction.kind === "show_hint") {
@@ -1456,7 +1629,10 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.action) {
-      void runGitActionWithToast({ action: quickAction.action });
+      void runGitActionWithToast({
+        action: quickAction.action,
+        ...commitDraftArgs(quickAction.action),
+      });
     }
   };
 
@@ -1468,6 +1644,11 @@ export default function GitActionsControl({
     }
     if (item.dialogAction === "create_pr") {
       void runGitActionWithToast({ action: "create_pr" });
+      return;
+    }
+    const draftArgs = commitDraftArgs("commit");
+    if (draftArgs && commitDraft) {
+      void runGitActionWithToast({ action: "commit", ...draftArgs });
       return;
     }
     setExcludedFiles(new Set());
@@ -1594,6 +1775,40 @@ export default function GitActionsControl({
           </MenuItem>
         );
       })}
+      {commitDraft && gitStatusForActions?.isRepo && gitStatusForActions.refName !== null
+        ? resolveSourceControlMenuExtras(gitStatusForActions, isGitActionRunning).map((extra) => {
+            const icon = renderSourceControlExtraIcon(extra.id);
+            if (extra.disabledReason) {
+              return (
+                <Popover key={extra.id}>
+                  <PopoverTrigger
+                    openOnHover
+                    nativeButton={false}
+                    render={<span className="block w-full cursor-not-allowed" />}
+                  >
+                    <MenuItem className="w-full" disabled>
+                      {icon}
+                      <MenuItemLabel>{extra.label}</MenuItemLabel>
+                    </MenuItem>
+                  </PopoverTrigger>
+                  <PopoverPopup tooltipStyle side="left" align="center">
+                    {extra.disabledReason}
+                  </PopoverPopup>
+                </Popover>
+              );
+            }
+            return (
+              <MenuItem
+                key={extra.id}
+                disabled={!canWriteSourceControl}
+                onClick={() => void runSourceControlExtra(extra.id)}
+              >
+                {icon}
+                <MenuItemLabel>{extra.label}</MenuItemLabel>
+              </MenuItem>
+            );
+          })
+        : null}
       {canPublishRepository ? (
         <MenuItem
           density={presentation === "menu" ? "touch" : "default"}
@@ -1824,7 +2039,7 @@ export default function GitActionsControl({
         </ActionGroup>
       )}
 
-      {isPanel && isRepo ? (
+      {isPanel && isRepo && !commitDraft ? (
         <ThreadDetailsControl
           type="button"
           variant="ghost"

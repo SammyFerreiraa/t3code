@@ -1860,6 +1860,112 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("diffs a commit against its first parent, a merge and a root commit included", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const rev = (spec: string) =>
+          git(cwd, ["rev-parse", spec]).pipe(Effect.map((out) => out.trim()));
+        const root = yield* rev("HEAD");
+        yield* git(cwd, ["switch", "-c", "side"]);
+        yield* writeTextFile(cwd, "side.txt", "side\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "side"]);
+        yield* git(cwd, ["switch", initialBranch]);
+        yield* writeTextFile(cwd, "README.md", "# test\nmore\n");
+        yield* git(cwd, ["commit", "-am", "edit readme"]);
+        const edit = yield* rev("HEAD");
+        yield* git(cwd, ["merge", "--no-ff", "side", "-m", "merge side"]);
+        const merge = yield* rev("HEAD");
+
+        const normal = (yield* driver.getReviewDiffPreview({ cwd, commit: edit })).sources;
+        assert.deepStrictEqual(
+          normal.map((source) => [source.kind, source.baseRef, source.headRef]),
+          [["commit", root, edit]],
+        );
+        assert.deepStrictEqual(normal[0]!.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(normal[0]!.diff, "+more");
+
+        const rootDiff = (yield* driver.getReviewDiffPreview({ cwd, commit: root })).sources[0]!;
+        assert.deepStrictEqual(
+          rootDiff.files?.map((file) => file.path),
+          ["README.md"],
+        );
+        assert.include(rootDiff.diff, "+# test");
+
+        const merged = (yield* driver.getReviewDiffPreview({ cwd, commit: merge })).sources[0]!;
+        assert.strictEqual(merged.baseRef, edit);
+        assert.deepStrictEqual(
+          merged.files?.map((file) => file.path),
+          ["side.txt"],
+        );
+
+        const scoped = (yield* driver.getReviewDiffPreview({
+          cwd,
+          commit: edit,
+          file: { path: "README.md", previousPath: null, sourceKind: "commit" },
+        })).sources[0]!;
+        assert.deepStrictEqual(
+          scoped.files?.map((file) => file.path),
+          ["README.md"],
+        );
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: null,
+            headRef: edit,
+            oldPath: "README.md",
+            newPath: "README.md",
+          }),
+        );
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# test\nmore\n");
+
+        const rootContents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: null,
+            headRef: root,
+            changeType: "new",
+          }),
+        );
+        assert.strictEqual(rootContents.oldContents, "");
+        assert.strictEqual(rootContents.newContents, "# test\n");
+      }),
+    );
+
+    it.effect("refuses a commit that is not a hex hash or does not exist", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        for (const commit of [
+          "--output=/tmp/pwned",
+          "HEAD",
+          "main~1",
+          "abc",
+          "0123456789abcdef0123456789abcdef01234567",
+        ]) {
+          const error = yield* driver.getReviewDiffPreview({ cwd, commit }).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+          const contentsError = yield* driver
+            .getReviewDiffFileContents(
+              makeReviewDiffFileContentsInput(cwd, {
+                sourceKind: "commit",
+                baseRef: null,
+                headRef: commit,
+              }),
+            )
+            .pipe(Effect.flip);
+          assert.strictEqual(contentsError._tag, "GitCommandError");
+        }
+      }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2262,6 +2368,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports staged, unstaged, untracked and partially staged files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "staged.txt", "one\n");
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged\n");
+        yield* git(cwd, ["add", "staged.txt", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged\nunstaged\nagain\n");
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "README.md",
+            insertions: 3,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+            unstaged: { insertions: 2, deletions: 0 },
+          },
+          {
+            path: "staged.txt",
+            insertions: 1,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+          },
+        ]);
+        assert.equal(status.workingTree.insertions, 4);
+      }),
+    );
+
+    it.effect("reports the index of a repository without commits as staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* git(cwd, ["add", "a.txt"]);
+        yield* writeTextFile(cwd, "a.txt", "a\nb\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "a.txt",
+            insertions: 2,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+        ]);
+      }),
+    );
+
     it.effect("reads Changes totals without minimizing and keeps review diffs minimal", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2463,6 +2623,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           path: "HEAD",
           insertions: 1,
           deletions: 0,
+          unstaged: { insertions: 1, deletions: 0 },
         });
       }),
     );
@@ -2483,9 +2644,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(cwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "café notes.md", insertions: 1, deletions: 0 },
-          { path: "src/new.ts", insertions: 1, deletions: 0 },
-          { path: "src/old.ts", insertions: 0, deletions: 0 },
+          {
+            path: "café notes.md",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "src/new.ts",
+            insertions: 1,
+            deletions: 0,
+            staged: { insertions: 0, deletions: 0 },
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "src/old.ts",
+            insertions: 0,
+            deletions: 0,
+            staged: { insertions: 0, deletions: 0 },
+          },
         ]);
         yield* driver.commit(cwd, "Commit selection", "", {
           stage: { filePaths: status.workingTree.files.map((file) => file.path) },
@@ -2513,9 +2690,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
-          { path: "README.md", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "nested/tracked.txt",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "README.md",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
         ]);
         // The root is what the paths above are relative to, not the nested cwd, and it keeps
         // the trailing space so the resolved editor target is the file that exists.
@@ -2548,8 +2735,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "nested/tracked.txt",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
         ]);
         assert.equal(
           NodeFS.realpathSync.native(status.workingTree.rootPath!),
@@ -2685,6 +2877,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.branch, "release");
         assert.equal(status.upstreamRef, "upstream/release");
         assert.equal(status.isDefaultBranch, false);
+      }),
+    );
+
+    it.effect("names origin's default branch from origin HEAD, else main or master", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const makeClone = (branches: ReadonlyArray<string>) =>
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+            yield* initRepoWithCommit(cwd);
+            yield* git(origin, ["init", "--bare"]);
+            yield* git(cwd, ["remote", "add", "origin", origin]);
+            for (const branch of branches) yield* git(cwd, ["push", "origin", `HEAD:${branch}`]);
+            yield* git(cwd, ["fetch", "origin"]);
+            yield* git(cwd, ["checkout", "-b", "feature"]);
+            return cwd;
+          });
+
+        const withHead = yield* makeClone(["develop", "main"]);
+        yield* git(withHead, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/develop",
+        ]);
+        assert.equal((yield* driver.statusDetailsLocal(withHead)).defaultRef, "develop");
+
+        const masterOnly = yield* makeClone(["master"]);
+        const status = yield* driver.statusDetailsLocal(masterOnly);
+        assert.equal(status.defaultRef, "master");
+        assert.equal(status.isDefaultBranch, false);
+
+        const noRemoteBranch = yield* makeClone([]);
+        assert.equal((yield* driver.statusDetailsLocal(noRemoteBranch)).defaultRef, undefined);
+      }),
+    );
+
+    it.effect("reports the commit HEAD points at, and none before the first commit", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* makeTmpDir();
+        yield* driver.initRepo({ cwd });
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).headSha, undefined);
+
+        yield* initRepoWithCommit(cwd);
+        const head = (yield* git(cwd, ["rev-parse", "HEAD"])).trim();
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).headSha, head);
       }),
     );
 

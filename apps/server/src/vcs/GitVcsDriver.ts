@@ -76,6 +76,10 @@ export interface GitStatusDetails {
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   hasOriginRemote: boolean;
   isDefaultBranch: boolean;
+  /** origin/HEAD's branch, else origin's main or master. */
+  defaultRef?: string;
+  /** Commit HEAD points at; absent before the first commit. */
+  headSha?: string;
   branch: string | null;
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;
@@ -255,6 +259,8 @@ export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
   refName?: string;
+  /** Drop remote-tracking refs whose remote branch is gone. */
+  prune?: boolean;
 }
 
 export interface GitRemoteExistsInput {
@@ -310,7 +316,11 @@ export class GitVcsDriver extends Context.Service<
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
-      options?: { readonly includePatch?: boolean },
+      options?: {
+        readonly includePatch?: boolean;
+        /** Read the index as it is instead of staging the working tree into it. */
+        readonly stagedOnly?: boolean;
+      },
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
     readonly commit: (
       cwd: string,

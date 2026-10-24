@@ -131,6 +131,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   };
   const addDiffSurfaceStable = useStableCallback(addDiffSurface);
+  const addSourceControlSurface = () => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  };
+  const addSourceControlSurfaceStable = useStableCallback(addSourceControlSurface);
   const openChangesFromThreadPanel = () => {
     addDiffSurface();
   };
@@ -285,6 +290,21 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   };
   const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
+  // With a commit hash the file opens that commit's diff instead of the working tree's.
+  const onOpenWorkingTreeFileDiff = (filePath: string, commitSha?: string) => {
+    if (!isServerThread || !activeThreadRef) return;
+    const diffOpen =
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
+    explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
+    if (commitSha) {
+      useDiffPanelStore.getState().selectCommitFile(activeThreadRef, commitSha, filePath);
+    } else {
+      useDiffPanelStore.getState().selectWorkingTreeFile(activeThreadRef, filePath);
+    }
+    useRightPanelStore.getState().open(activeThreadRef, "diff");
+    onDiffPanelOpen?.();
+  };
+  const onOpenWorkingTreeFileDiffStable = useStableCallback(onOpenWorkingTreeFileDiff);
   useEffect(
     () =>
       subscribePreviewAction((action) => {
@@ -311,6 +331,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addSourceControlSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
@@ -320,6 +341,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenTurnDiffStable,
+    onOpenWorkingTreeFileDiffStable,
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,

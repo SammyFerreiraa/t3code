@@ -27,6 +27,12 @@ export function createReviewEnvironmentAtoms<R, E>(
       tag: WS_METHODS.reviewGetDiffPreview,
       staleTimeMs: 5_000,
     }),
+    // A commit never changes, so its diff stays fresh for as long as it is cached.
+    commitDiffPreview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review:commit-diff-preview",
+      tag: WS_METHODS.reviewGetDiffPreview,
+      staleTimeMs: 30 * 60_000,
+    }),
     diffFilePatch: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:review:diff-file-patch",
       staleTimeMs: 5 * 60_000,

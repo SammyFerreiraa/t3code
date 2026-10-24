@@ -13,10 +13,11 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -274,6 +275,21 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:vcs:status",
+    idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+      subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        Stream.mapAccum(
+          () => null as VcsStatusResult | null,
+          (current, event) => {
+            const next = applyGitStatusStreamEvent(current, event);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -282,20 +298,27 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
-      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
+    // One page of history. Refetches when HEAD moves, never by polling.
+    log: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:log",
+      tag: WS_METHODS.vcsLog,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        // A push or fetch moves origin/x without moving HEAD; it shows in ahead and behind.
+        Atom.map(status({ environmentId, input: { cwd: input.cwd } }), (result) => {
+          const current = Option.getOrNull(AsyncResult.value(result));
+          return current === null
+            ? null
+            : `${current.headSha ?? ""}:${current.aheadCount}:${current.behindCount}`;
+        }),
     }),
+    // A commit never changes, so its file list stays fresh for as long as it is cached.
+    commitFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:commit-files",
+      tag: WS_METHODS.vcsCommitFiles,
+      staleTimeMs: 30 * 60_000,
+    }),
+    status,
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,
@@ -350,6 +373,32 @@ export function createVcsEnvironmentAtoms<R, E>(
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    stage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stage",
+      tag: WS_METHODS.vcsStage,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    unstage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:unstage",
+      tag: WS_METHODS.vcsUnstage,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    fetch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:fetch",
+      tag: WS_METHODS.vcsFetch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    rebaseOntoDefault: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:rebase-onto-default",
+      tag: WS_METHODS.vcsRebaseOntoDefault,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,

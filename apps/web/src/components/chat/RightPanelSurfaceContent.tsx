@@ -31,6 +31,7 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const SourceControlPanel = lazy(() => import("../sourceControl/SourceControlPanel"));
 
 export type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -74,6 +75,8 @@ export function RightPanelSurfaceContent(props: {
     image: ComposerImageAttachment | null,
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
+  readonly gitCwd: string | null;
+  readonly onOpenWorkingTreeFileDiff: (filePath: string, commitSha?: string) => void;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
@@ -112,6 +115,17 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
+          />
+        </Suspense>
+      );
+    case "source-control":
+      return (
+        <Suspense fallback={null}>
+          <SourceControlPanel
+            key={scopedThreadKey(threadRef)}
+            threadRef={threadRef}
+            gitCwd={props.gitCwd}
+            onOpenFileDiff={props.onOpenWorkingTreeFileDiff}
           />
         </Suspense>
       );

@@ -14,6 +14,7 @@ import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
+  "source-control",
   "files",
   "file",
   "preview",
@@ -46,6 +47,7 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
+  | { id: "source-control"; kind: "source-control" }
   | {
       id: "files";
       kind: "files";
@@ -221,6 +223,8 @@ const singletonSurface = (
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
+    case "source-control":
+      return { id: "source-control", kind };
     case "files":
       return { id: "files", kind };
     case "pull-requests":
@@ -620,13 +624,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
             const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
-            const pullRequestActive =
-              activePanel === "pull-request" || activePanel === "pull-requests";
+            // A commit message is likely being written on Source Control; do not take the tab.
+            const keepsActivePanel =
+              activePanel === "pull-request" ||
+              activePanel === "pull-requests" ||
+              activePanel === "source-control";
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
                 expectedUserActionRevision &&
               activePanel !== "diff" &&
-              !pullRequestActive;
+              !keepsActivePanel;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
               ...(opened ? upsertSurface(thread, singletonSurface("diff")) : thread),

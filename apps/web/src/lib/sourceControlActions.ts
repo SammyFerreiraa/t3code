@@ -6,5 +6,7 @@ export {
   useSourceControlActionRunning,
   useSourceControlPublishRepositoryAction,
   useVcsInitAction,
+  useVcsFetchAction,
   useVcsPullAction,
+  useVcsRebaseOntoDefaultAction,
 } from "../state/sourceControlActions";

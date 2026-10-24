@@ -23,6 +23,12 @@ export const GitStackedAction = Schema.Literals([
   "commit_push_pr",
 ]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+// How the push step of a stacked action talks to the remote. `publish` pushes with upstream to
+// the primary remote even without new commits, `sync` pulls (fast-forward only) before pushing,
+// and `force_with_lease` overwrites the upstream only if every commit on it is already in
+// the branch, so commits you have not pulled are never erased.
+export const GitPushMode = Schema.Literals(["publish", "sync", "force_with_lease"]);
+export type GitPushMode = typeof GitPushMode.Type;
 export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
 export const GitActionProgressKind = Schema.Literals([
@@ -123,6 +129,13 @@ export const VcsPullInput = Schema.Struct({
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
+// Without paths, stage everything (`git add -A`) or unstage everything.
+export const VcsIndexInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  paths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+});
+export type VcsIndexInput = typeof VcsIndexInput.Type;
+
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
@@ -130,6 +143,9 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  // Commit the index as it is instead of staging the working tree first. Overrides filePaths.
+  stagedOnly: Schema.optional(Schema.Boolean),
+  pushMode: Schema.optional(GitPushMode),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -213,11 +229,20 @@ const VcsStatusChangeRequest = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const VcsLineChanges = Schema.Struct({
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
   isDefaultRef: Schema.Boolean,
+  // The origin's default branch name, for labels. Absent when unknown or from older servers.
+  defaultRef: Schema.optional(TrimmedNonEmptyStringSchema),
+  // Commit HEAD points at, so clients can tell when the history changed. Absent before the first commit.
+  headSha: Schema.optional(TrimmedNonEmptyStringSchema),
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
@@ -229,6 +254,11 @@ const VcsStatusLocalShape = {
         path: GitFilePath,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        // Index state. Servers that predate staging omit all three; a partially staged file
+        // carries both `staged` (HEAD to index) and `unstaged` (index to worktree).
+        staged: Schema.optional(VcsLineChanges),
+        unstaged: Schema.optional(VcsLineChanges),
+        untracked: Schema.optional(Schema.Boolean),
       }),
     ),
     insertions: NonNegativeInt,
@@ -350,6 +380,68 @@ export const VcsPullResult = Schema.Struct({
   upstreamRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
+
+export const VcsRebaseOntoDefaultResult = Schema.Struct({
+  status: Schema.Literals(["rebased", "skipped_up_to_date"]),
+  // Remote-tracking ref the branch was rebased onto, for example origin/main.
+  baseRef: TrimmedNonEmptyStringSchema,
+});
+export type VcsRebaseOntoDefaultResult = typeof VcsRebaseOntoDefaultResult.Type;
+
+const VCS_LOG_MAX_LIMIT = 100;
+export const VcsLogInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(VCS_LOG_MAX_LIMIT))),
+  // Number of commits already listed.
+  cursor: Schema.optional(NonNegativeInt),
+});
+export type VcsLogInput = typeof VcsLogInput.Type;
+
+export const VcsCommitRef = Schema.Struct({
+  name: TrimmedNonEmptyStringSchema,
+  // `head` is the checked-out branch, or HEAD itself when detached.
+  kind: Schema.Literals(["head", "branch", "remote", "tag"]),
+});
+export type VcsCommitRef = typeof VcsCommitRef.Type;
+
+export const VcsCommit = Schema.Struct({
+  sha: TrimmedNonEmptyStringSchema,
+  shortSha: TrimmedNonEmptyStringSchema,
+  subject: Schema.String,
+  authorName: Schema.String,
+  authoredAt: Schema.String,
+  refs: Schema.Array(VcsCommitRef),
+});
+export type VcsCommit = typeof VcsCommit.Type;
+
+export const VcsLogResult = Schema.Struct({
+  commits: Schema.Array(VcsCommit),
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+});
+export type VcsLogResult = typeof VcsLogResult.Type;
+
+// Hex only, so a client-supplied value can never read as a git option.
+export const GitCommitSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{7,64}$/));
+
+export const VcsCommitFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  sha: GitCommitSha,
+});
+export type VcsCommitFilesInput = typeof VcsCommitFilesInput.Type;
+
+export const VcsCommitFile = Schema.Struct({
+  path: GitFilePath,
+  previousPath: Schema.NullOr(GitFilePath),
+  status: Schema.Literals(["added", "modified", "deleted", "renamed", "copied", "typechange"]),
+});
+export type VcsCommitFile = typeof VcsCommitFile.Type;
+
+export const VcsCommitFilesResult = Schema.Struct({
+  files: Schema.Array(VcsCommitFile),
+  // A commit touching thousands of files lists only the first ones.
+  truncated: Schema.Boolean,
+});
+export type VcsCommitFilesResult = typeof VcsCommitFilesResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Only a fixed
 // reason reaches the error and its diagnostic suffix; newer, unknown reasons
