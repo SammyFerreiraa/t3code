@@ -124,7 +124,9 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import {
+  describeSourceControlError,
   resolveSourceControlMenuExtras,
+  resolveSourceControlQuickAction,
   type SourceControlCommitDraft,
   type SourceControlMenuExtraId,
 } from "./sourceControl/sourceControlPanel.logic";
@@ -1176,12 +1178,15 @@ export default function GitActionsControl({
     isGitActionRunning,
     hasPrimaryRemote,
   );
-  const quickAction = resolveQuickAction(
+  const headerQuickAction = resolveQuickAction(
     gitStatusForActions,
     isGitActionRunning,
     isDefaultRef,
     hasPrimaryRemote,
   );
+  const quickAction = commitDraft
+    ? resolveSourceControlQuickAction(headerQuickAction, gitStatusForActions)
+    : headerQuickAction;
   const commitDraftArgs = (action: GitStackedAction) => {
     if (
       !commitDraft ||
@@ -1339,7 +1344,11 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: isPanel
+            ? describeSourceControlError(error)
+            : error instanceof Error
+              ? error.message
+              : "An error occurred.",
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
@@ -1476,7 +1485,11 @@ export default function GitActionsControl({
           stackedThreadToast({
             type: "error",
             title: input.failureTitle,
-            description: error instanceof Error ? error.message : "An error occurred.",
+            description: isPanel
+              ? describeSourceControlError(error)
+              : error instanceof Error
+                ? error.message
+                : "An error occurred.",
             timeout: errorToastTiming.timeout,
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
           }),

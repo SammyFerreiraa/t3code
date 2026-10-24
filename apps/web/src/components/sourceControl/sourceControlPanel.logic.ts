@@ -1,6 +1,8 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { changeRequestTerminologyFor } from "@t3tools/client-runtime/state/vcs";
 
+import type { GitQuickAction } from "../GitActionsControl.logic";
+
 type ChangedFile = VcsStatusResult["workingTree"]["files"][number];
 
 /** What the Source Control tab hands the git actions control so commits use its message and index. */
@@ -55,6 +57,41 @@ export function resolveSourceControlSections(
   return sections;
 }
 
+const BEHIND_PUSH_REASON = "Branch is behind upstream. Pull/rebase before pushing.";
+
+/**
+ * The header's quick action offers to commit and push on a branch that is behind, which its own
+ * Push item refuses. The tab's menu follows that refusal, so its main button does too.
+ */
+export function resolveSourceControlQuickAction(
+  quickAction: GitQuickAction,
+  status: VcsStatusResult | null,
+): GitQuickAction {
+  if (
+    status !== null &&
+    status.behindCount > 0 &&
+    quickAction.kind === "run_action" &&
+    (quickAction.action === "commit_push" || quickAction.action === "commit_push_pr")
+  ) {
+    return { ...quickAction, kind: "show_hint", disabled: true, hint: BEHIND_PUSH_REASON };
+  }
+  return quickAction;
+}
+
+/** A git error as the tab shows it: the explanation, without the service name and the path. */
+export function describeSourceControlError(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "detail" in error &&
+    typeof error.detail === "string" &&
+    error.detail.length > 0
+  ) {
+    return error.detail;
+  }
+  return error instanceof Error ? error.message : "An error occurred.";
+}
+
 export type SourceControlMenuExtraId =
   | "commit_push"
   | "commit_push_pr"
@@ -97,11 +134,7 @@ export function resolveSourceControlMenuExtras(
     : null;
 
   const commitReason =
-    busy ??
-    detached ??
-    clean ??
-    noRemote ??
-    (isBehind ? "Branch is behind upstream. Pull/rebase before pushing." : null);
+    busy ?? detached ?? clean ?? noRemote ?? (isBehind ? BEHIND_PUSH_REASON : null);
 
   const extras: SourceControlMenuExtra[] = [
     { id: "commit_push", label: "Commit & push", disabledReason: commitReason },

@@ -1,7 +1,11 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { GitCommandError } from "@t3tools/contracts";
+import { resolveQuickAction } from "../GitActionsControl.logic";
 import {
+  describeSourceControlError,
+  resolveSourceControlQuickAction,
   resolveSourceControlMenuExtras,
   resolveSourceControlPanelState,
   resolveSourceControlSections,
@@ -180,5 +184,39 @@ describe("resolveSourceControlMenuExtras", () => {
     expect(
       reason(status({ hasUpstream: false, hasPrimaryRemote: false }), "publish_branch"),
     ).toMatch(/origin/);
+  });
+});
+
+describe("resolveSourceControlQuickAction", () => {
+  it("does not offer to push from a branch that is behind, like the menu", () => {
+    const behind = status({ behindCount: 2, aheadCount: 0 });
+    const quick = resolveSourceControlQuickAction(resolveQuickAction(behind, false), behind);
+    expect(quick).toMatchObject({ disabled: true, kind: "show_hint" });
+    expect(quick.hint).toMatch(/behind upstream/);
+  });
+
+  it("leaves the header's choice alone otherwise", () => {
+    const current = status({ behindCount: 0 });
+    const headerAction = resolveQuickAction(current, false);
+    expect(resolveSourceControlQuickAction(headerAction, current)).toBe(headerAction);
+  });
+});
+
+describe("describeSourceControlError", () => {
+  it("leads with the explanation, without the service name or the path", () => {
+    const error = new GitCommandError({
+      operation: "GitRemoteSync.forcePushWithLease",
+      command: "git",
+      cwd: "/home/me/repo",
+      detail: "The remote branch has commits you have not pulled.",
+    });
+    expect(describeSourceControlError(error)).toBe(
+      "The remote branch has commits you have not pulled.",
+    );
+  });
+
+  it("falls back to the message of other errors", () => {
+    expect(describeSourceControlError(new Error("boom"))).toBe("boom");
+    expect(describeSourceControlError("nope")).toBe("An error occurred.");
   });
 });
