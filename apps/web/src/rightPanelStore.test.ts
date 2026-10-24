@@ -60,6 +60,21 @@ describe("rightPanelStore", () => {
     ).toEqual(["device", "diff", pr.id]);
   });
 
+  it("reopens a closed Source Control tab", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "source-control");
+    store.closeSurface(refA, "source-control");
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("A Source Control tab must not create a browser session");
+      },
+    });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "source-control",
+    );
+  });
+
   it("reopens the active tab first after a bulk close", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+
 import { useDiffPanelSessionStore, useDiffPanelStore } from "./diffPanelStore";
 
 describe("diffPanelStore", () => {
@@ -40,5 +43,17 @@ describe("diffPanelStore", () => {
       new Set(),
     );
     expect(defaults).toEqual(new Set(["src/app.ts", "src/index.ts"]));
+  });
+  it("re-requests a reveal when the same working tree file is selected again", () => {
+    const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("thread"));
+    const select = () => useDiffPanelStore.getState().selectWorkingTreeFile(ref, "src/app.ts");
+    select();
+    select();
+
+    expect(useDiffPanelStore.getState().byThreadKey["env:thread"]).toEqual({
+      kind: "unstaged",
+      filePath: "src/app.ts",
+      revealRequestId: 2,
+    });
   });
 });

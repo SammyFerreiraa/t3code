@@ -54,6 +54,7 @@ import {
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
+  GitBranchIcon,
   FolderIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
@@ -1362,6 +1363,20 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-source-control",
+      searchTerms: ["source control", "git", "commit", "push", "changes", "stage"],
+      title: "Open source control",
+      icon: <GitBranchIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "source-control");
+      },
+    });
   }
 
   if (activeThread !== null) {

@@ -2391,6 +2391,7 @@ export default function ChatView(props: ChatViewProps) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addSourceControlSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
@@ -2400,6 +2401,7 @@ export default function ChatView(props: ChatViewProps) {
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenTurnDiffStable,
+    onOpenWorkingTreeFileDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
@@ -3078,6 +3080,8 @@ export default function ChatView(props: ChatViewProps) {
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
+      gitCwd={gitCwd}
+      onOpenWorkingTreeFileDiff={onOpenWorkingTreeFileDiffStable}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
         focusRequestId: terminalFocusRequestId,
@@ -3890,6 +3894,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowserInProfile={createBrowserSurfaceStable}
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
+          onAddSourceControl={addSourceControlSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
@@ -3897,6 +3902,7 @@ export default function ChatView(props: ChatViewProps) {
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
+          sourceControlAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}

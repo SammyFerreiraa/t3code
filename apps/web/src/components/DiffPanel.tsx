@@ -274,9 +274,14 @@ export default function DiffPanel({
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
   const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
-  const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
+  const selectedFilePath =
+    diffSelection.kind === "turn" || diffSelection.kind === "unstaged"
+      ? (diffSelection.filePath ?? null)
+      : null;
   const selectedFileRevealRequestId =
-    diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
+    diffSelection.kind === "turn" || diffSelection.kind === "unstaged"
+      ? (diffSelection.revealRequestId ?? 0)
+      : 0;
   const selectedTurn =
     selectedRunId === null
       ? undefined
