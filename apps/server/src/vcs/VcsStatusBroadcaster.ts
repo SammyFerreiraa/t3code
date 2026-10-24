@@ -31,6 +31,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as VcsRepositoryWatcher from "./VcsRepositoryWatcher.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -233,6 +234,7 @@ export const make = Effect.gen(function* () {
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+  const repositoryWatcher = yield* VcsRepositoryWatcher.VcsRepositoryWatcher;
   const fs = yield* FileSystem.FileSystem;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
@@ -505,6 +507,19 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Edits, commits and checkouts made outside the app; no network fetch.
+  const refreshAfterRepositoryChange = Effect.fn(
+    "VcsStatusBroadcaster.refreshAfterRepositoryChange",
+  )(
+    function* (cwd: string, change: VcsRepositoryWatcher.VcsRepositoryChange) {
+      yield* refreshLocalStatusCore(cwd);
+      if (change.refsChanged) {
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
+      }
+    },
+    Effect.ignoreCause({ log: true }),
+  );
+
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
@@ -727,6 +742,10 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
+        // Forked: listing the repository's directories must not delay the first snapshot.
+        yield* repositoryWatcher
+          .watch(cwd, (change) => refreshAfterRepositoryChange(cwd, change))
+          .pipe(Effect.forkScoped);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;

@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { GitManagerError } from "@t3tools/contracts";
 
+import * as VcsRepositoryWatcher from "./VcsRepositoryWatcher.ts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -79,9 +81,15 @@ function layerTestFor(state: {
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
   beforeRemoteStatus?: Effect.Effect<void>;
+  repositoryWatcher?: VcsRepositoryWatcher.VcsRepositoryWatcherShape;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provide(
+      state.repositoryWatcher
+        ? Layer.succeed(VcsRepositoryWatcher.VcsRepositoryWatcher, state.repositoryWatcher)
+        : Layer.empty,
+    ),
     Layer.provide(layerBackgroundPolicy(() => state.backgroundWorkEnabled !== false)),
     Layer.provide(
       Layer.succeed(
@@ -502,6 +510,75 @@ describe("VcsStatusBroadcaster", () => {
 
       const status = yield* Fiber.join(refresh);
       assert.deepStrictEqual(status.branchChanges, fetchedLocal.branchChanges);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect("refreshes from repository changes only while a status stream is open", () => {
+    let activeWatches = 0;
+    let onChange: Parameters<VcsRepositoryWatcher.VcsRepositoryWatcherShape["watch"]>[1] | null =
+      null;
+    let watching: Deferred.Deferred<void> | null = null;
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus as VcsStatusRemoteResult | null,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+      repositoryWatcher: {
+        watch: (_cwd, nextOnChange) =>
+          Effect.acquireRelease(
+            Effect.suspend(() => {
+              activeWatches += 1;
+              onChange = nextOnChange;
+              return watching ? Deferred.succeed(watching, undefined) : Effect.void;
+            }),
+            () =>
+              Effect.sync(() => {
+                activeWatches -= 1;
+              }),
+          ).pipe(Effect.asVoid),
+      } satisfies VcsRepositoryWatcher.VcsRepositoryWatcherShape,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      watching = yield* Deferred.make<void>();
+      assert.equal(activeWatches, 0);
+
+      const events = yield* Queue.unbounded<VcsStatusStreamEvent>();
+      const scope = yield* Scope.make();
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+        (event) => Queue.offer(events, event),
+      ).pipe(Effect.forkIn(scope));
+      assert.equal((yield* Queue.take(events))._tag, "snapshot");
+      yield* Deferred.await(watching);
+      assert.equal(activeWatches, 1);
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        headSha: "abc123",
+        hasWorkingTreeChanges: true,
+      };
+      yield* onChange!({ paths: ["/repo/a.txt"], refsChanged: false });
+      assert.deepStrictEqual(yield* Queue.take(events), {
+        _tag: "localUpdated",
+        local: state.currentLocalStatus,
+      });
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, []);
+
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
+      yield* onChange!({ paths: ["/repo/.git/refs/heads/main"], refsChanged: true });
+      assert.deepStrictEqual(yield* Queue.take(events), {
+        _tag: "remoteUpdated",
+        remote: state.currentRemoteStatus,
+      });
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false]);
+
+      yield* Scope.close(scope, Exit.void);
+      assert.equal(activeWatches, 0);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
