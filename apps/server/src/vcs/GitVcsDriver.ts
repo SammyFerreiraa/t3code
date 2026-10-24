@@ -310,7 +310,11 @@ export class GitVcsDriver extends Context.Service<
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
-      options?: { readonly includePatch?: boolean },
+      options?: {
+        readonly includePatch?: boolean;
+        /** Read the index as it is instead of staging the working tree into it. */
+        readonly stagedOnly?: boolean;
+      },
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
     readonly commit: (
       cwd: string,

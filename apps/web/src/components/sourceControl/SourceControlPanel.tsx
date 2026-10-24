@@ -1,14 +1,8 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  AuthSourceControlWriteScope,
-  type ScopedThreadRef,
-  type VcsStatusResult,
-} from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, type ScopedThreadRef } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { ArrowDownIcon, ArrowUpIcon, GitBranchIcon } from "lucide-react";
-import { memo } from "react";
 
-import { Checkbox } from "~/components/ui/checkbox";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
 import { Textarea } from "~/components/ui/textarea";
@@ -16,13 +10,12 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
 import GitActionsControl from "../GitActionsControl";
-import { StartTruncatedPath } from "../StartTruncatedPath";
+import { SourceControlFileSections } from "./SourceControlFileSections";
+import { readSourceControlDraft, useSourceControlDraftStore } from "./sourceControlDraftStore";
 import {
-  EMPTY_SOURCE_CONTROL_DRAFT,
-  readSourceControlDraft,
-  useSourceControlDraftStore,
-} from "./sourceControlDraftStore";
-import { resolveCommitFilePaths, resolveSourceControlPanelState } from "./sourceControlPanel.logic";
+  resolveSourceControlPanelState,
+  resolveSourceControlSections,
+} from "./sourceControlPanel.logic";
 
 function PanelMessage({ children }: { children: string }) {
   return (
@@ -56,72 +49,12 @@ function CommitMessageBox({
   );
 }
 
-const ChangedFiles = memo(function ChangedFiles({
-  threadRef,
-  files,
-  excluded,
-  disabled,
-  onOpenFileDiff,
-}: {
-  readonly threadRef: ScopedThreadRef;
-  readonly files: VcsStatusResult["workingTree"]["files"];
-  readonly excluded: ReadonlySet<string>;
-  readonly disabled: boolean;
-  readonly onOpenFileDiff: (filePath: string) => void;
-}) {
-  const toggleFile = (path: string) => {
-    const next = new Set(readSourceControlDraft(threadRef).excluded);
-    if (!next.delete(path)) next.add(path);
-    useSourceControlDraftStore.getState().update(threadRef, { excluded: next });
-  };
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <ul aria-label="Changed files" className="flex flex-col gap-0.5">
-        {files.map((file) => (
-          <li
-            key={file.path}
-            className="flex items-center gap-2 rounded-md px-1.5 py-1 font-mono text-xs hover:bg-accent/50"
-          >
-            <Checkbox
-              aria-label={`Include ${file.path} in commit`}
-              checked={!excluded.has(file.path)}
-              disabled={disabled}
-              onCheckedChange={() => toggleFile(file.path)}
-            />
-            <button
-              type="button"
-              className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 text-left"
-              aria-label={`Open diff of ${file.path}`}
-              onClick={() => onOpenFileDiff(file.path)}
-            >
-              <StartTruncatedPath
-                path={file.path}
-                className={excluded.has(file.path) ? "flex-1 text-muted-foreground" : "flex-1"}
-              />
-              <span className="shrink-0">
-                <span className="text-diff-addition">+{formatDiffCount(file.insertions)}</span>
-                <span className="text-muted-foreground"> / </span>
-                <span className="text-diff-deletion">-{formatDiffCount(file.deletions)}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </ScrollArea>
-  );
-});
-
 export default function SourceControlPanel(props: {
   readonly threadRef: ScopedThreadRef;
   readonly gitCwd: string | null;
   readonly onOpenFileDiff: (filePath: string) => void;
 }) {
   const { threadRef, gitCwd, onOpenFileDiff } = props;
-  const excluded = useSourceControlDraftStore(
-    (state) =>
-      state.byThreadKey[scopedThreadKey(threadRef)]?.excluded ??
-      EMPTY_SOURCE_CONTROL_DRAFT.excluded,
-  );
   const canWrite = useEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope);
   const { data: status, error } = useEnvironmentQuery(
     gitCwd === null
@@ -141,8 +74,7 @@ export default function SourceControlPanel(props: {
   }
 
   const panelState = resolveSourceControlPanelState(status);
-  const files = status.workingTree.files;
-  const filePaths = resolveCommitFilePaths(files, excluded);
+  const sections = resolveSourceControlSections(status.workingTree.files);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       <div className="flex min-w-0 items-center gap-2 px-1 text-sm">
@@ -196,7 +128,7 @@ export default function SourceControlPanel(props: {
             activeThreadRef={threadRef}
             commitDraft={{
               getMessage: () => readSourceControlDraft(threadRef).message,
-              filePaths,
+              stagedOnly: sections.staged.length > 0,
               onCommitted: (message) =>
                 useSourceControlDraftStore.getState().clearCommitted(threadRef, message),
             }}
@@ -204,13 +136,15 @@ export default function SourceControlPanel(props: {
           {panelState === "clean" ? (
             <PanelMessage>No changes</PanelMessage>
           ) : (
-            <ChangedFiles
-              threadRef={threadRef}
-              files={files}
-              excluded={excluded}
-              disabled={!canWrite}
-              onOpenFileDiff={onOpenFileDiff}
-            />
+            <ScrollArea className="min-h-0 flex-1">
+              <SourceControlFileSections
+                environmentId={threadRef.environmentId}
+                gitCwd={gitCwd}
+                sections={sections}
+                disabled={!canWrite}
+                onOpenFileDiff={onOpenFileDiff}
+              />
+            </ScrollArea>
           )}
         </>
       )}

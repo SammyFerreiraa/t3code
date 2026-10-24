@@ -556,6 +556,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    stagedOnly?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -2650,6 +2651,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("commits only the index, hunks included, when stagedOnly is set", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\nunstaged\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "new\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "staged only",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect((yield* runGit(repoDir, ["show", "HEAD:README.md"])).stdout).toBe("hello\nstaged\n");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+unstaged");
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toContain(
+        "?? untracked.txt",
+      );
+    }),
+  );
+
+  it.effect("skips a stagedOnly commit when nothing is staged", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nunstaged\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "nothing staged",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("skipped_no_changes");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+unstaged");
     }),
   );
 

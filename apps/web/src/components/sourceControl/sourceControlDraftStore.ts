@@ -4,7 +4,6 @@ import { create } from "zustand";
 
 interface SourceControlDraft {
   readonly message: string;
-  readonly excluded: ReadonlySet<string>;
 }
 
 interface SourceControlDraftStoreState {
@@ -15,7 +14,7 @@ interface SourceControlDraftStoreState {
   clearCommitted: (ref: ScopedThreadRef, committedMessage: string) => void;
 }
 
-export const EMPTY_SOURCE_CONTROL_DRAFT: SourceControlDraft = { message: "", excluded: new Set() };
+export const EMPTY_SOURCE_CONTROL_DRAFT: SourceControlDraft = { message: "" };
 
 const withoutDraft = (state: SourceControlDraftStoreState, key: string) => {
   if (!(key in state.byThreadKey)) return state;
@@ -24,7 +23,7 @@ const withoutDraft = (state: SourceControlDraftStoreState, key: string) => {
 };
 
 // Session-only: the Source Control tab unmounts whenever another tab opens, which must not drop a
-// half-written commit message or file selection.
+// half-written commit message.
 export const useSourceControlDraftStore = create<SourceControlDraftStoreState>()((set) => ({
   byThreadKey: {},
   update: (ref, patch) =>

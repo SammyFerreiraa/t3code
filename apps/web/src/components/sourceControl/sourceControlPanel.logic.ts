@@ -3,11 +3,12 @@ import { changeRequestTerminologyFor } from "@t3tools/client-runtime/state/vcs";
 
 type ChangedFile = VcsStatusResult["workingTree"]["files"][number];
 
-/** What the Source Control tab hands the git actions control so commits use its message and selection. */
+/** What the Source Control tab hands the git actions control so commits use its message and index. */
 export interface SourceControlCommitDraft {
   /** Read on click, so typing never re-renders the git actions control. */
   readonly getMessage: () => string;
-  readonly filePaths: string[] | null;
+  /** Like VS Code: with something staged, commit only the index; otherwise commit everything. */
+  readonly stagedOnly: boolean;
   /** Gets the message that was sent, so edits made while the action ran are not discarded. */
   readonly onCommitted: (committedMessage: string) => void;
 }
@@ -22,13 +23,36 @@ export function resolveSourceControlPanelState(
   return status.hasWorkingTreeChanges ? "changes" : "clean";
 }
 
-/** `null` means every file is included, which is what the server does without `filePaths`. */
-export function resolveCommitFilePaths(
+export interface SourceControlSectionFile {
+  readonly path: string;
+  readonly insertions: number;
+  readonly deletions: number;
+}
+
+export interface SourceControlSections {
+  readonly staged: SourceControlSectionFile[];
+  readonly changes: SourceControlSectionFile[];
+  readonly untracked: SourceControlSectionFile[];
+}
+
+/**
+ * A partially staged file sits in both Staged and Changes with each side's line counts. Files
+ * without index state come from a server that predates staging and stay in Changes.
+ */
+export function resolveSourceControlSections(
   files: ReadonlyArray<ChangedFile>,
-  excluded: ReadonlySet<string>,
-): string[] | null {
-  const kept = files.filter((file) => !excluded.has(file.path));
-  return kept.length === files.length ? null : kept.map((file) => file.path);
+): SourceControlSections {
+  const sections: SourceControlSections = { staged: [], changes: [], untracked: [] };
+  for (const file of files) {
+    if (file.untracked) {
+      sections.untracked.push({ path: file.path, insertions: 0, deletions: 0 });
+      continue;
+    }
+    if (file.staged) sections.staged.push({ path: file.path, ...file.staged });
+    if (file.unstaged) sections.changes.push({ path: file.path, ...file.unstaged });
+    else if (!file.staged) sections.changes.push(file);
+  }
+  return sections;
 }
 
 export interface SourceControlMenuExtra {
@@ -45,7 +69,6 @@ export interface SourceControlMenuExtra {
 export function resolveSourceControlMenuExtras(
   status: VcsStatusResult,
   isBusy: boolean,
-  hasSelectedFiles: boolean,
 ): SourceControlMenuExtra[] {
   const terminology = changeRequestTerminologyFor(status);
   const busy = isBusy ? "Git action in progress." : null;
@@ -58,13 +81,11 @@ export function resolveSourceControlMenuExtras(
       ? "Detached HEAD: check out a branch before pushing."
       : !status.hasWorkingTreeChanges
         ? "Worktree is clean. Make changes before committing."
-        : !hasSelectedFiles
-          ? "Select at least one file to commit."
-          : !canReachRemote
-            ? 'Add an "origin" remote before pushing.'
-            : isBehind
-              ? "Branch is behind upstream. Pull/rebase before pushing."
-              : null);
+        : !canReachRemote
+          ? 'Add an "origin" remote before pushing.'
+          : isBehind
+            ? "Branch is behind upstream. Pull/rebase before pushing."
+            : null);
 
   const extras: SourceControlMenuExtra[] = [
     {

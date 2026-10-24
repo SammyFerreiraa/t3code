@@ -236,6 +236,36 @@ function parsePorcelainPath(record: string): string | null {
   return filePath.length > 0 ? filePath : null;
 }
 
+interface IndexState {
+  readonly staged: boolean;
+  readonly unstaged: boolean;
+  readonly untracked: boolean;
+}
+
+// Porcelain v2 puts the XY status after the record type: X is HEAD to index, Y is index to
+// worktree, and "." means unchanged. Staging an unmerged file resolves it, so it is unstaged.
+function parsePorcelainIndexState(record: string): IndexState {
+  const kind = record[0];
+  if (kind === "?") return { staged: false, unstaged: false, untracked: true };
+  if (kind === "u") return { staged: false, unstaged: true, untracked: false };
+  return { staged: record[2] !== ".", unstaged: record[3] !== ".", untracked: false };
+}
+
+const NO_LINE_CHANGES = { insertions: 0, deletions: 0 };
+
+function sumNumstatByPath(
+  entries: ReadonlyArray<ReviewDiffFileStat>,
+): Map<string, { insertions: number; deletions: number }> {
+  const stats = new Map<string, { insertions: number; deletions: number }>();
+  for (const entry of entries) {
+    const stat = stats.get(entry.path) ?? { insertions: 0, deletions: 0 };
+    stat.insertions += entry.additions;
+    stat.deletions += entry.deletions;
+    stats.set(entry.path, stat);
+  }
+  return stats;
+}
+
 function filterBranchesForListQuery(
   refs: ReadonlyArray<VcsRef>,
   query?: string,
@@ -2125,26 +2155,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
     );
     const statusCacheKey = repositoryPaths?.gitCommonDir;
-    const [numstatEntries, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
+    const statusStdout = statusResult.stdout;
+    // A record's X column is "." when the index matches HEAD. Without staged changes the single
+    // HEAD-to-worktree numstat is the unstaged numstat, so the split costs a process only then.
+    const hasStagedChanges = /(?:^|\0)[12] [^.]/.test(statusStdout);
+    const unstagedNumstat = runGitStdout("GitVcsDriver.statusDetails.numstat.unstaged", cwd, [
+      "diff-files",
+      "--numstat",
+      "-z",
+    ]).pipe(Effect.map(parseReviewNumstat));
+    const [numstat, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
         // Plumbing, because porcelain `git diff` rewrites the index even with
         // GIT_OPTIONAL_LOCKS=0. -M keeps porcelain's rename detection.
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
-          ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"],
+          [
+            "diff-index",
+            ...(hasStagedChanges ? ["--cached"] : []),
+            "-M",
+            "--numstat",
+            "-z",
+            "HEAD",
+            "--",
+          ],
           { allowNonZeroExit: true },
         ).pipe(
           Effect.flatMap((result) => {
-            if (result.exitCode === 0) return Effect.succeed(parseReviewNumstat(result.stdout));
+            if (result.exitCode === 0) {
+              const entries = parseReviewNumstat(result.stdout);
+              return hasStagedChanges
+                ? Effect.map(unstagedNumstat, (unstaged) => ({ staged: entries, unstaged }))
+                : Effect.succeed({ staged: [], unstaged: entries });
+            }
             if (isUnbornHeadStderr(result.stderr)) {
               return Effect.map(
                 Effect.all([
-                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
-                    "diff-files",
-                    "--numstat",
-                    "-z",
-                  ]),
+                  unstagedNumstat,
                   runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
                     "diff",
                     "--cached",
@@ -2152,10 +2200,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                     "-z",
                   ]),
                 ]),
-                ([unstagedStdout, stagedStdout]) => [
-                  ...parseReviewNumstat(stagedStdout),
-                  ...parseReviewNumstat(unstagedStdout),
-                ],
+                ([unstaged, stagedStdout]) => ({
+                  staged: parseReviewNumstat(stagedStdout),
+                  unstaged,
+                }),
               );
             }
             return Effect.fail(
@@ -2182,7 +2230,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { concurrency: "unbounded" },
     );
-    const statusStdout = statusResult.stdout;
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
@@ -2190,7 +2237,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
-    const changedFilesWithoutNumstat = new Set<string>();
+    const indexStates = new Map<string, IndexState>();
 
     const statusRecords = statusStdout.split("\0");
     for (let index = 0; index < statusRecords.length; index++) {
@@ -2215,12 +2262,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (line.length > 0 && !line.startsWith("#")) {
         hasWorkingTreeChanges = true;
         const pathValue = parsePorcelainPath(line);
-        if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        const state = parsePorcelainIndexState(line);
+        if (pathValue) indexStates.set(pathValue, state);
         // A rename record is followed by its original path as a separate record. Listing it
-        // keeps the deletion selectable when committing only some files.
+        // keeps the deletion selectable when committing only some files, and staged with it.
         if (line.startsWith("2 ")) {
           const originalPath = statusRecords[++index];
-          if (originalPath) changedFilesWithoutNumstat.add(originalPath);
+          // The worktree column describes the new path; the original only exists as an index deletion.
+          if (originalPath) indexStates.set(originalPath, { ...state, unstaged: false });
         }
       }
     }
@@ -2246,29 +2295,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : yield* computeAheadCountAgainstBase(cwd, refName).pipe(Effect.orElseSucceed(() => 0));
     }
 
-    const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
-    for (const entry of numstatEntries) {
-      const stat = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
-      stat.insertions += entry.additions;
-      stat.deletions += entry.deletions;
-      fileStatMap.set(entry.path, stat);
-    }
-
+    const stagedStats = sumNumstatByPath(numstat.staged);
+    const unstagedStats = sumNumstatByPath(numstat.unstaged);
     let insertions = 0;
     let deletions = 0;
-    const files = Array.from(fileStatMap.entries())
-      .map(([filePath, stat]) => {
-        insertions += stat.insertions;
-        deletions += stat.deletions;
-        return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
-      })
-      .toSorted((a, b) => a.path.localeCompare(b.path));
-
-    for (const filePath of changedFilesWithoutNumstat) {
-      if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
-    }
-    files.sort((a, b) => a.path.localeCompare(b.path));
+    const files = Array.from(
+      new Set([...stagedStats.keys(), ...unstagedStats.keys(), ...indexStates.keys()]),
+      (filePath) => {
+        const staged = stagedStats.get(filePath) ?? NO_LINE_CHANGES;
+        const unstaged = unstagedStats.get(filePath) ?? NO_LINE_CHANGES;
+        const state = indexStates.get(filePath);
+        insertions += staged.insertions + unstaged.insertions;
+        deletions += staged.deletions + unstaged.deletions;
+        return {
+          path: filePath,
+          insertions: staged.insertions + unstaged.insertions,
+          deletions: staged.deletions + unstaged.deletions,
+          ...(state?.staged ? { staged } : {}),
+          ...(state?.unstaged ? { unstaged } : {}),
+          ...(state?.untracked ? { untracked: true } : {}),
+        };
+      },
+    ).toSorted((a, b) => a.path.localeCompare(b.path));
 
     const branchChanges = options?.includeBranchChanges
       ? yield* readBranchChangeTotals(repositoryPaths?.worktreeRoot ?? cwd, refName).pipe(
@@ -2434,7 +2482,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               { env },
             );
           }
-          yield* stageCommitChanges(cwd, filePaths, env);
+          if (!options?.stagedOnly) yield* stageCommitChanges(cwd, filePaths, env);
 
           const stagedSummary = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedSummary",

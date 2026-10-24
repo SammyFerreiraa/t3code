@@ -2262,6 +2262,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports staged, unstaged, untracked and partially staged files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "staged.txt", "one\n");
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged\n");
+        yield* git(cwd, ["add", "staged.txt", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged\nunstaged\nagain\n");
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "README.md",
+            insertions: 3,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+            unstaged: { insertions: 2, deletions: 0 },
+          },
+          {
+            path: "staged.txt",
+            insertions: 1,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+          },
+        ]);
+        assert.equal(status.workingTree.insertions, 4);
+      }),
+    );
+
+    it.effect("reports the index of a repository without commits as staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* git(cwd, ["add", "a.txt"]);
+        yield* writeTextFile(cwd, "a.txt", "a\nb\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.deepStrictEqual(status.workingTree.files, [
+          {
+            path: "a.txt",
+            insertions: 2,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 0 },
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+        ]);
+      }),
+    );
+
     it.effect("reads Changes totals without minimizing and keeps review diffs minimal", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2463,6 +2517,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           path: "HEAD",
           insertions: 1,
           deletions: 0,
+          unstaged: { insertions: 1, deletions: 0 },
         });
       }),
     );
@@ -2483,9 +2538,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(cwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "café notes.md", insertions: 1, deletions: 0 },
-          { path: "src/new.ts", insertions: 1, deletions: 0 },
-          { path: "src/old.ts", insertions: 0, deletions: 0 },
+          {
+            path: "café notes.md",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "src/new.ts",
+            insertions: 1,
+            deletions: 0,
+            staged: { insertions: 0, deletions: 0 },
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "src/old.ts",
+            insertions: 0,
+            deletions: 0,
+            staged: { insertions: 0, deletions: 0 },
+          },
         ]);
         yield* driver.commit(cwd, "Commit selection", "", {
           stage: { filePaths: status.workingTree.files.map((file) => file.path) },
@@ -2513,9 +2584,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
-          { path: "README.md", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "nested/tracked.txt",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
+          {
+            path: "README.md",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
         ]);
         // The root is what the paths above are relative to, not the nested cwd, and it keeps
         // the trailing space so the resolved editor target is the file that exists.
@@ -2548,8 +2629,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, untracked: true },
+          {
+            path: "nested/tracked.txt",
+            insertions: 1,
+            deletions: 0,
+            unstaged: { insertions: 1, deletions: 0 },
+          },
         ]);
         assert.equal(
           NodeFS.realpathSync.native(status.workingTree.rootPath!),

@@ -2081,11 +2081,13 @@ export const make = Effect.gen(function* () {
       commitMessage?: string;
       includeBranch?: boolean;
       filePaths?: readonly string[];
+      stagedOnly?: boolean;
       settings: SourceControlTextGenerationSettings;
     }) {
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
       const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
         includePatch: customCommit === null,
+        ...(input.stagedOnly ? { stagedOnly: true } : {}),
       });
       if (!context) {
         return null;
@@ -2135,6 +2137,7 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    stagedOnly = false,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2161,6 +2164,7 @@ export const make = Effect.gen(function* () {
         branch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(stagedOnly ? { stagedOnly } : {}),
         settings,
       });
     }
@@ -2220,7 +2224,8 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
+      // Without `stage` the driver commits the index untouched.
+      ...(stagedOnly ? {} : { stage: filePaths ? { filePaths } : {} }),
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
     if (currentHookName !== null) {
@@ -3017,12 +3022,14 @@ export const make = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
+    stagedOnly = false,
   ) {
     const suggestion = yield* resolveCommitAndBranchSuggestion({
       cwd,
       branch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
       includeBranch: true,
       settings,
     });
@@ -3147,6 +3154,7 @@ export const make = Effect.gen(function* () {
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
+            input.stagedOnly,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -3172,6 +3180,7 @@ export const make = Effect.gen(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  input.stagedOnly,
                 ),
               ),
             )

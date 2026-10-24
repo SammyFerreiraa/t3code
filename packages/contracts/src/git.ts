@@ -123,6 +123,13 @@ export const VcsPullInput = Schema.Struct({
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
+// Without paths, stage everything (`git add -A`) or unstage everything.
+export const VcsIndexInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  paths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+});
+export type VcsIndexInput = typeof VcsIndexInput.Type;
+
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
@@ -130,6 +137,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  // Commit the index as it is instead of staging the working tree first. Overrides filePaths.
+  stagedOnly: Schema.optional(Schema.Boolean),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -213,6 +222,11 @@ const VcsStatusChangeRequest = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const VcsLineChanges = Schema.Struct({
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -229,6 +243,11 @@ const VcsStatusLocalShape = {
         path: GitFilePath,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        // Index state. Servers that predate staging omit all three; a partially staged file
+        // carries both `staged` (HEAD to index) and `unstaged` (index to worktree).
+        staged: Schema.optional(VcsLineChanges),
+        unstaged: Schema.optional(VcsLineChanges),
+        untracked: Schema.optional(Schema.Boolean),
       }),
     ),
     insertions: NonNegativeInt,

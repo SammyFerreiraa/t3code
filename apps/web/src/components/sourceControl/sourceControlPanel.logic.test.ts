@@ -2,9 +2,9 @@ import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  resolveCommitFilePaths,
   resolveSourceControlMenuExtras,
   resolveSourceControlPanelState,
+  resolveSourceControlSections,
 } from "./sourceControlPanel.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -32,30 +32,46 @@ describe("resolveSourceControlPanelState", () => {
   });
 });
 
-describe("resolveCommitFilePaths", () => {
-  const files = [
-    { path: "a.ts", insertions: 1, deletions: 0 },
-    { path: "b.ts", insertions: 0, deletions: 2 },
-  ];
-
-  it("sends no selection when nothing is excluded", () => {
-    expect(resolveCommitFilePaths(files, new Set())).toBeNull();
+describe("resolveSourceControlSections", () => {
+  it("splits files by index state, keeping each side's line counts", () => {
+    const sections = resolveSourceControlSections([
+      {
+        path: "both.ts",
+        insertions: 3,
+        deletions: 1,
+        staged: { insertions: 1, deletions: 1 },
+        unstaged: { insertions: 2, deletions: 0 },
+      },
+      { path: "index.ts", insertions: 4, deletions: 0, staged: { insertions: 4, deletions: 0 } },
+      { path: "tree.ts", insertions: 0, deletions: 2, unstaged: { insertions: 0, deletions: 2 } },
+      { path: "new.ts", insertions: 0, deletions: 0, untracked: true },
+    ]);
+    expect(sections).toEqual({
+      staged: [
+        { path: "both.ts", insertions: 1, deletions: 1 },
+        { path: "index.ts", insertions: 4, deletions: 0 },
+      ],
+      changes: [
+        { path: "both.ts", insertions: 2, deletions: 0 },
+        { path: "tree.ts", insertions: 0, deletions: 2 },
+      ],
+      untracked: [{ path: "new.ts", insertions: 0, deletions: 0 }],
+    });
   });
 
-  it("ignores exclusions for files that are no longer changed", () => {
-    expect(resolveCommitFilePaths(files, new Set(["gone.ts"]))).toBeNull();
-  });
-
-  it("sends only the files that stay selected", () => {
-    expect(resolveCommitFilePaths(files, new Set(["a.ts"]))).toEqual(["b.ts"]);
-    expect(resolveCommitFilePaths(files, new Set(["a.ts", "b.ts"]))).toEqual([]);
+  it("keeps files from a server without index state in Changes", () => {
+    const file = { path: "a.ts", insertions: 1, deletions: 0 };
+    expect(resolveSourceControlSections([file])).toEqual({
+      staged: [],
+      changes: [file],
+      untracked: [],
+    });
   });
 });
 
 describe("resolveSourceControlMenuExtras", () => {
-  const reason = (input: VcsStatusResult, id: string, selected = true, busy = false) =>
-    resolveSourceControlMenuExtras(input, busy, selected).find((item) => item.id === id)
-      ?.disabledReason;
+  const reason = (input: VcsStatusResult, id: string, busy = false) =>
+    resolveSourceControlMenuExtras(input, busy).find((item) => item.id === id)?.disabledReason;
 
   it("enables commit and push on a changed branch that is not behind", () => {
     expect(reason(status(), "commit_push")).toBeNull();
@@ -66,11 +82,10 @@ describe("resolveSourceControlMenuExtras", () => {
     expect(reason(status({ behindCount: 2 }), "commit_push")).toMatch(/behind upstream/);
     expect(reason(status({ refName: null }), "commit_push")).toMatch(/Detached HEAD/);
     expect(reason(status({ hasWorkingTreeChanges: false }), "commit_push")).toMatch(/clean/);
-    expect(reason(status(), "commit_push", false)).toMatch(/Select at least one file/);
     expect(reason(status({ hasUpstream: false, hasPrimaryRemote: false }), "commit_push")).toMatch(
       /origin/,
     );
-    expect(reason(status(), "commit_push", true, true)).toBe("Git action in progress.");
+    expect(reason(status(), "commit_push", true)).toBe("Git action in progress.");
   });
 
   it("drops commit, push and PR when a PR is already open", () => {
@@ -84,14 +99,14 @@ describe("resolveSourceControlMenuExtras", () => {
         state: "open",
       },
     });
-    expect(resolveSourceControlMenuExtras(open, false, true).map((item) => item.id)).toEqual([
+    expect(resolveSourceControlMenuExtras(open, false).map((item) => item.id)).toEqual([
       "commit_push",
       "pull",
     ]);
   });
 
   it("offers no PR from the default ref", () => {
-    const ids = resolveSourceControlMenuExtras(status({ isDefaultRef: true }), false, true).map(
+    const ids = resolveSourceControlMenuExtras(status({ isDefaultRef: true }), false).map(
       (item) => item.id,
     );
     expect(ids).toEqual(["commit_push", "pull"]);

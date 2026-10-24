@@ -211,11 +211,14 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
+        const gitMethods = [WS_METHODS.vcsInit, WS_METHODS.vcsStage, WS_METHODS.vcsUnstage];
         registry.set(sessions(env), AsyncResult.success(grant(true)));
-        const git = createCommandPermissions(runtime, WS_METHODS.vcsInit);
-        expect((yield* git.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
-          AuthSourceControlWriteScope,
-        );
+        for (const method of gitMethods) {
+          const git = createCommandPermissions(runtime, method);
+          expect((yield* git.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+            AuthSourceControlWriteScope,
+          );
+        }
         registry.set(
           sessions(env),
           AsyncResult.success({
@@ -224,7 +227,9 @@ it.effect(
             permissions: [AuthSourceControlWriteScope],
           }),
         );
-        yield* git.authorize(registry, env);
+        for (const method of gitMethods) {
+          yield* createCommandPermissions(runtime, method).authorize(registry, env);
+        }
         const prepare = createCommandPermissions(runtime, WS_METHODS.gitPreparePullRequestThread);
         const input = {
           cwd: "/repo",

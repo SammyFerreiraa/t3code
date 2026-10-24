@@ -134,7 +134,7 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
-  /** Set by the Source Control tab, which owns the commit message and file selection. */
+  /** Set by the Source Control tab, which owns the commit message and the index. */
   commitDraft?: SourceControlCommitDraft;
 }
 
@@ -146,6 +146,7 @@ interface PendingDefaultBranchAction {
   onConfirmed?: () => void;
   onSucceeded?: () => void;
   filePaths?: string[];
+  stagedOnly?: boolean;
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -159,6 +160,7 @@ interface RunGitActionWithToastInput {
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
+  stagedOnly?: boolean;
 }
 
 interface InlineGitActionSuccess {
@@ -234,13 +236,11 @@ function getMenuActionDisabledReason({
   gitStatus,
   isBusy,
   hasPrimaryRemote,
-  selectsNoFiles,
 }: {
   item: GitActionMenuItem;
   gitStatus: VcsStatusResult | null;
   isBusy: boolean;
   hasPrimaryRemote: boolean;
-  selectsNoFiles: boolean;
 }): string | null {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
@@ -256,7 +256,6 @@ function getMenuActionDisabledReason({
     if (!hasChanges) {
       return "Worktree is clean. Make changes before committing.";
     }
-    if (selectsNoFiles) return "Select at least one file to commit.";
     return "Commit is currently unavailable.";
   }
 
@@ -1168,21 +1167,15 @@ export default function GitActionsControl({
     const message = commitDraft.getMessage().trim();
     return {
       ...(message ? { commitMessage: message } : {}),
-      ...(commitDraft.filePaths ? { filePaths: commitDraft.filePaths } : {}),
+      ...(commitDraft.stagedOnly ? { stagedOnly: true } : {}),
       onSucceeded: () => commitDraft.onCommitted(message),
     };
   };
-  const draftSelectsNothing = (action: GitStackedAction | undefined) =>
-    action !== undefined &&
-    commitDraftArgs(action) !== null &&
-    commitDraft?.filePaths?.length === 0;
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
     : quickAction.disabled
       ? (quickAction.hint ?? "This action is currently unavailable.")
-      : draftSelectsNothing(quickAction.action)
-        ? "Select at least one file to commit."
-        : null;
+      : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
@@ -1246,6 +1239,7 @@ export default function GitActionsControl({
     statusOverride,
     featureBranch = false,
     filePaths,
+    stagedOnly,
   }: RunGitActionWithToastInput) {
     if (
       activeEnvironmentId === null ||
@@ -1284,6 +1278,7 @@ export default function GitActionsControl({
         ...(onConfirmed ? { onConfirmed } : {}),
         ...(onSucceeded ? { onSucceeded } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(stagedOnly ? { stagedOnly } : {}),
       });
       return;
     }
@@ -1299,6 +1294,7 @@ export default function GitActionsControl({
       ...(commitMessage ? { commitMessage } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
     });
@@ -1399,7 +1395,7 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, onSucceeded, filePaths } =
+    const { action, commitMessage, onConfirmed, onSucceeded, filePaths, stagedOnly } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
@@ -1408,6 +1404,7 @@ export default function GitActionsControl({
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(onSucceeded ? { onSucceeded } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -1588,15 +1585,12 @@ export default function GitActionsControl({
   };
   const gitItems = (
     <>
-      {gitActionMenuItems.map((baseItem) => {
-        const selectsNoFiles = baseItem.dialogAction === "commit" && draftSelectsNothing("commit");
-        const item = selectsNoFiles ? { ...baseItem, disabled: true } : baseItem;
+      {gitActionMenuItems.map((item) => {
         const disabledReason = getMenuActionDisabledReason({
           item,
           gitStatus: gitStatusForActions,
           isBusy: isGitActionRunning,
           hasPrimaryRemote,
-          selectsNoFiles,
         });
         if (item.disabled && disabledReason && presentation === "menu") {
           return (
@@ -1648,11 +1642,7 @@ export default function GitActionsControl({
         );
       })}
       {commitDraft && gitStatusForActions?.isRepo && gitStatusForActions.refName !== null
-        ? resolveSourceControlMenuExtras(
-            gitStatusForActions,
-            isGitActionRunning,
-            commitDraft.filePaths?.length !== 0,
-          ).map((extra) => {
+        ? resolveSourceControlMenuExtras(gitStatusForActions, isGitActionRunning).map((extra) => {
             const run = () => {
               if (extra.action === "pull") {
                 runPull();

@@ -27,8 +27,10 @@ import {
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusResult,
+  type VcsIndexInput,
 } from "@t3tools/contracts";
 
+import * as GitIndexStaging from "./GitIndexStaging.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -60,6 +62,8 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly stagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (input: VcsIndexInput) => Effect.Effect<void, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -369,6 +373,14 @@ export const make = Effect.gen(function* () {
     pullCurrentBranch: (cwd) =>
       ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
+      ),
+    stagePaths: (input) =>
+      ensureGitCommand("GitWorkflowService.stagePaths", input.cwd).pipe(
+        Effect.andThen(GitIndexStaging.stagePaths(git, input)),
+      ),
+    unstagePaths: (input) =>
+      ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
+        Effect.andThen(GitIndexStaging.unstagePaths(git, input)),
       ),
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(

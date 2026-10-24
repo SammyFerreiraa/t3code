@@ -1783,6 +1783,10 @@ export const layerWsRpc = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+      const refreshLocalGitStatus = (cwd: string) =>
+        vcsStatusBroadcaster
+          .refreshLocalStatus(cwd)
+          .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -2920,6 +2924,11 @@ export const layerWsRpc = (
           gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        // Awaited so the RPC settles after the new index state has been published.
+        [WS_METHODS.vcsStage]: (input) =>
+          gitWorkflow.stagePaths(input).pipe(Effect.tap(() => refreshLocalGitStatus(input.cwd))),
+        [WS_METHODS.vcsUnstage]: (input) =>
+          gitWorkflow.unstagePaths(input).pipe(Effect.tap(() => refreshLocalGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
