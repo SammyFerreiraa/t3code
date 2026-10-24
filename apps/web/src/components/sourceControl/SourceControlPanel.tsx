@@ -197,7 +197,8 @@ export default function SourceControlPanel(props: {
             commitDraft={{
               getMessage: () => readSourceControlDraft(threadRef).message,
               filePaths,
-              onCommitted: () => useSourceControlDraftStore.getState().clear(threadRef),
+              onCommitted: (message) =>
+                useSourceControlDraftStore.getState().clearCommitted(threadRef, message),
             }}
           />
           {panelState === "clean" ? (

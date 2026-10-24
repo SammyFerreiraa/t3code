@@ -22,3 +22,15 @@ it("keeps each thread's draft apart until it is cleared", () => {
   store.clear(ref);
   expect(readSourceControlDraft(ref)).toBe(EMPTY_SOURCE_CONTROL_DRAFT);
 });
+
+it("keeps edits made while a commit ran", () => {
+  const store = useSourceControlDraftStore.getState();
+  store.update(ref, { message: "fix it", excluded: new Set(["a.ts"]) });
+  store.update(ref, { message: "fix it, and more" });
+  store.clearCommitted(ref, "fix it");
+  expect(readSourceControlDraft(ref).message).toBe("fix it, and more");
+  expect(readSourceControlDraft(ref).excluded).toEqual(new Set(["a.ts"]));
+
+  store.clearCommitted(ref, "fix it, and more");
+  expect(readSourceControlDraft(ref)).toBe(EMPTY_SOURCE_CONTROL_DRAFT);
+});

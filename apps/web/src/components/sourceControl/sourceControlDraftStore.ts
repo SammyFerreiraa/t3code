@@ -11,9 +11,17 @@ interface SourceControlDraftStoreState {
   byThreadKey: Record<string, SourceControlDraft>;
   update: (ref: ScopedThreadRef, patch: Partial<SourceControlDraft>) => void;
   clear: (ref: ScopedThreadRef) => void;
+  /** Clears the draft unless the message changed since `committedMessage` was sent. */
+  clearCommitted: (ref: ScopedThreadRef, committedMessage: string) => void;
 }
 
 export const EMPTY_SOURCE_CONTROL_DRAFT: SourceControlDraft = { message: "", excluded: new Set() };
+
+const withoutDraft = (state: SourceControlDraftStoreState, key: string) => {
+  if (!(key in state.byThreadKey)) return state;
+  const { [key]: _removed, ...byThreadKey } = state.byThreadKey;
+  return { byThreadKey };
+};
 
 // Session-only: the Source Control tab unmounts whenever another tab opens, which must not drop a
 // half-written commit message or file selection.
@@ -29,12 +37,13 @@ export const useSourceControlDraftStore = create<SourceControlDraftStoreState>()
         },
       };
     }),
-  clear: (ref) =>
+  clear: (ref) => set((state) => withoutDraft(state, scopedThreadKey(ref))),
+  clearCommitted: (ref, committedMessage) =>
     set((state) => {
       const key = scopedThreadKey(ref);
-      if (!(key in state.byThreadKey)) return state;
-      const { [key]: _removed, ...byThreadKey } = state.byThreadKey;
-      return { byThreadKey };
+      return state.byThreadKey[key]?.message.trim() === committedMessage
+        ? withoutDraft(state, key)
+        : state;
     }),
 }));
 

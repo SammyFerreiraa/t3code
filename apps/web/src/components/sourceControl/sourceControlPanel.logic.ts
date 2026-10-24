@@ -8,7 +8,8 @@ export interface SourceControlCommitDraft {
   /** Read on click, so typing never re-renders the git actions control. */
   readonly getMessage: () => string;
   readonly filePaths: string[] | null;
-  readonly onCommitted: () => void;
+  /** Gets the message that was sent, so edits made while the action ran are not discarded. */
+  readonly onCommitted: (committedMessage: string) => void;
 }
 
 export type SourceControlPanelState = "loading" | "not-repo" | "clean" | "changes";

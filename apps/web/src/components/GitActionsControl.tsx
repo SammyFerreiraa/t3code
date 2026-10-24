@@ -1169,7 +1169,7 @@ export default function GitActionsControl({
     return {
       ...(message ? { commitMessage: message } : {}),
       ...(commitDraft.filePaths ? { filePaths: commitDraft.filePaths } : {}),
-      onSucceeded: commitDraft.onCommitted,
+      onSucceeded: () => commitDraft.onCommitted(message),
     };
   };
   const draftSelectsNothing = (action: GitStackedAction | undefined) =>
