@@ -35,6 +35,20 @@ describe("isStatusRelevantChange", () => {
   });
 });
 
+describe("worktreeDirectoriesFromFiles", () => {
+  it.effect("lists every ancestor directory, or nothing past the limit", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const files = "a/b/c.txt\0d.txt\0a/e.txt\0";
+      assert.deepStrictEqual(
+        VcsRepositoryWatcher.worktreeDirectoriesFromFiles(path, "/r", files, 3),
+        new Set(["/r", "/r/a", "/r/a/b"]),
+      );
+      assert.isNull(VcsRepositoryWatcher.worktreeDirectoriesFromFiles(path, "/r", files, 2));
+    }).pipe(Effect.provide(Path.layer)),
+  );
+});
+
 describe("makeCoalescedRunner", () => {
   it.effect("runs once for a burst of triggers", () =>
     Effect.gen(function* () {
@@ -88,16 +102,16 @@ describe("makeCoalescedRunner", () => {
   );
 });
 
-// Counts open directory watches so tests can see them start and stop.
-const layerTestFor = (activeWatches: { count: number }) =>
+// Tracks open directory watches so tests can see which start and stop.
+const layerTestFor = (activeWatches: Set<string>) =>
   VcsRepositoryWatcher.layer.pipe(
     Layer.provide(
       Layer.succeed(VcsRepositoryWatcher.VcsDirectoryWatch, (directory, listener) => {
         const watcher = NodeFS.watch(directory, listener);
-        activeWatches.count += 1;
+        activeWatches.add(directory);
         const close = watcher.close.bind(watcher);
         watcher.close = () => {
-          activeWatches.count -= 1;
+          activeWatches.delete(directory);
           close();
         };
         return watcher;
@@ -134,7 +148,7 @@ describe("VcsRepositoryWatcher", () => {
   // Live: real git subprocesses and real file system events.
   it.live("reports worktree and ref changes, ignoring objects, and follows new directories", () =>
     Effect.gen(function* () {
-      const activeWatches = { count: 0 };
+      const activeWatches = new Set<string>();
       return yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -145,53 +159,74 @@ describe("VcsRepositoryWatcher", () => {
         yield* watcher
           .watch(cwd, (change) => Queue.offer(changes, change))
           .pipe(Scope.provide(scope));
-        assert.isAbove(activeWatches.count, 0);
+        for (const directory of [cwd, path.join(cwd, "src"), path.join(cwd, ".git")]) {
+          assert.isTrue(activeWatches.has(directory), directory);
+        }
+        assert.isTrue(activeWatches.has(path.join(cwd, ".git", "refs", "heads")));
+        assert.isFalse([...activeWatches].some((directory) => directory.includes("objects")));
 
-        // Written before the worktree edit, so it would land in the same or an earlier batch.
+        // Written before the worktree edit: a gitdir event would mark the batch refsChanged.
         yield* fs.makeDirectory(path.join(cwd, ".git", "objects", "zz"));
         yield* fs.writeFileString(path.join(cwd, ".git", "objects", "zz", "object"), "x");
         yield* fs.writeFileString(path.join(cwd, "src", "a.txt"), "edited\n");
-        const edit = yield* Queue.take(changes);
-        assert.include(edit.paths, path.join(cwd, "src", "a.txt"));
-        assert.isFalse(edit.paths.some((changed) => changed.includes(`${path.sep}objects`)));
-        assert.isFalse(edit.refsChanged);
+        assert.isFalse((yield* Queue.take(changes)).refsChanged);
 
         yield* git(cwd, ["commit", "-am", "edit"]);
         yield* takeUntil(changes, (change) => change.refsChanged);
 
         yield* fs.makeDirectory(path.join(cwd, "fresh"));
         yield* fs.writeFileString(path.join(cwd, "fresh", "b.txt"), "b\n");
-        yield* takeUntil(changes, (change) => change.paths.includes(path.join(cwd, "fresh")));
-        yield* fs.writeFileString(path.join(cwd, "fresh", "b.txt"), "changed\n");
-        yield* takeUntil(changes, (change) =>
-          change.paths.includes(path.join(cwd, "fresh", "b.txt")),
-        );
+        // The resync runs before the batch's onChange.
+        yield* takeUntil(changes, () => activeWatches.has(path.join(cwd, "fresh")));
 
         yield* Scope.close(scope, Exit.void);
-        assert.equal(activeWatches.count, 0);
+        assert.equal(activeWatches.size, 0);
+      }).pipe(Effect.provide(layerTestFor(activeWatches)));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still watches refs when the file listing fails", () =>
+    Effect.gen(function* () {
+      const activeWatches = new Set<string>();
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const watcher = yield* VcsRepositoryWatcher.VcsRepositoryWatcher;
+        const cwd = yield* makeRepository;
+        // ls-files reads the index; rev-parse and symbolic-ref do not.
+        yield* fs.writeFileString(path.join(cwd, ".git", "index"), "corrupt");
+        const changes = yield* Queue.unbounded<VcsRepositoryWatcher.VcsRepositoryChange>();
+        yield* watcher.watch(cwd, (change) => Queue.offer(changes, change));
+
+        assert.isTrue(activeWatches.has(cwd));
+        assert.isTrue(activeWatches.has(path.join(cwd, ".git", "refs", "heads")));
+        assert.isFalse(activeWatches.has(path.join(cwd, "src")));
+
+        yield* git(cwd, ["symbolic-ref", "HEAD", "refs/heads/other"]);
+        assert.isTrue((yield* Queue.take(changes)).refsChanged);
       }).pipe(Effect.provide(layerTestFor(activeWatches)));
     }).pipe(Effect.scoped),
   );
 
   it.live("shares one set of watchers per repository until the last retainer leaves", () =>
     Effect.gen(function* () {
-      const activeWatches = { count: 0 };
+      const activeWatches = new Set<string>();
       return yield* Effect.gen(function* () {
         const watcher = yield* VcsRepositoryWatcher.VcsRepositoryWatcher;
         const cwd = yield* makeRepository;
-        assert.equal(activeWatches.count, 0);
+        assert.equal(activeWatches.size, 0);
 
         const first = yield* Scope.make();
         const second = yield* Scope.make();
         yield* watcher.watch(cwd, () => Effect.void).pipe(Scope.provide(first));
-        const watched = activeWatches.count;
+        const watched = activeWatches.size;
         yield* watcher.watch(cwd, () => Effect.void).pipe(Scope.provide(second));
-        assert.equal(activeWatches.count, watched);
+        assert.equal(activeWatches.size, watched);
 
         yield* Scope.close(first, Exit.void);
-        assert.equal(activeWatches.count, watched);
+        assert.equal(activeWatches.size, watched);
         yield* Scope.close(second, Exit.void);
-        assert.equal(activeWatches.count, 0);
+        assert.equal(activeWatches.size, 0);
       }).pipe(Effect.provide(layerTestFor(activeWatches)));
     }).pipe(Effect.scoped),
   );

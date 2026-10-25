@@ -4,20 +4,23 @@ import * as NodeFS from "node:fs";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
+import * as RcMap from "effect/RcMap";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as VcsProcess from "./VcsProcess.ts";
 
 const VCS_REPOSITORY_CHANGE_DELAY = Duration.millis(200);
 const MAX_LIST_FILES_OUTPUT_BYTES = 64 * 1024 * 1024;
+// Past this, per-directory watches would eat the user's inotify budget that editors and
+// other watchers share; only refs and the top level are watched.
+const MAX_WORKTREE_DIRECTORIES = 10_000;
 
 // Entries directly inside the gitdir that can move the status. objects/, logs/,
 // *.lock and FETCH_HEAD cannot (a fetch that moves a branch also writes refs/remotes).
@@ -49,8 +52,31 @@ export function isStatusRelevantChange(kind: WatchedDirectoryKind, name: string)
   }
 }
 
+/**
+ * The top level plus every directory holding a listed file, or null past `maxDirectories`.
+ * @internal Exported for tests.
+ */
+export function worktreeDirectoriesFromFiles(
+  path: Path.Path,
+  topLevel: string,
+  nulSeparatedFiles: string,
+  maxDirectories: number,
+): Set<string> | null {
+  const directories = new Set([topLevel]);
+  for (const file of nulSeparatedFiles.split("\0")) {
+    let directory = path.dirname(file);
+    while (directory !== "." && directory !== "") {
+      const absolute = path.join(topLevel, directory);
+      if (directories.has(absolute)) break;
+      directories.add(absolute);
+      if (directories.size > maxDirectories) return null;
+      directory = path.dirname(directory);
+    }
+  }
+  return directories;
+}
+
 export interface VcsRepositoryChange {
-  readonly paths: ReadonlyArray<string>;
   /** HEAD, a branch, or a remote-tracking ref may have moved, so ahead/behind can change too. */
   readonly refsChanged: boolean;
 }
@@ -101,7 +127,7 @@ export const makeCoalescedRunner = Effect.fn("VcsRepositoryWatcher.makeCoalesced
 });
 
 interface PendingChange {
-  readonly paths: Set<string>;
+  changed: boolean;
   // Renamed entries that are not watched directories: maybe a new directory to watch.
   readonly renamed: Set<string>;
   refsChanged: boolean;
@@ -109,15 +135,27 @@ interface PendingChange {
 }
 
 const emptyPending = (): PendingChange => ({
-  paths: new Set(),
+  changed: false,
   renamed: new Set(),
   refsChanged: false,
   resync: false,
 });
 
-interface ActiveRepositoryWatch {
-  readonly scope: Scope.Closeable;
-  readonly retainers: number;
+// Equal by cwd only, so the RcMap shares one session per cwd and the first retainer's
+// onChange serves it.
+class SessionKey implements Equal.Equal {
+  readonly cwd: string;
+  readonly onChange: (change: VcsRepositoryChange) => Effect.Effect<void>;
+  constructor(cwd: string, onChange: (change: VcsRepositoryChange) => Effect.Effect<void>) {
+    this.cwd = cwd;
+    this.onChange = onChange;
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof SessionKey && that.cwd === this.cwd;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.cwd);
+  }
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -126,10 +164,6 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const watchDirectory = yield* VcsDirectoryWatch;
-  const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
-    Scope.close(scope, Exit.void),
-  );
-  const activeRef = yield* SynchronizedRef.make(new Map<string, ActiveRepositoryWatch>());
 
   const git = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
     vcsProcess
@@ -158,7 +192,13 @@ export const make = Effect.gen(function* () {
     const watched = new Map<string, NodeFS.FSWatcher>();
     let pending = emptyPending();
     let trigger = (): void => {};
-    const failureLoggedRef = yield* Ref.make(false);
+    const loggedWarnings = new Set<string>();
+    const warnOnce = (message: string, fields: Record<string, unknown> = {}) =>
+      Effect.suspend(() => {
+        if (loggedWarnings.has(message)) return Effect.void;
+        loggedWarnings.add(message);
+        return Effect.logWarning(message, { cwdLength: cwd.length, ...fields });
+      });
     const syncLock = yield* Semaphore.make(1);
 
     yield* Effect.addFinalizer(() =>
@@ -169,23 +209,30 @@ export const make = Effect.gen(function* () {
     );
 
     const listDirectories = Effect.gen(function* () {
-      const directories = new Map<string, WatchedDirectoryKind>([[topLevel, "worktree"]]);
       const files = yield* git(topLevel, "VcsRepositoryWatcher.listFiles", [
         "ls-files",
         "-z",
         "--cached",
         "--others",
         "--exclude-standard",
-      ]);
-      for (const file of files.split("\0")) {
-        let directory = path.dirname(file);
-        while (directory !== "." && directory !== "") {
-          const absolute = path.join(topLevel, directory);
-          if (directories.has(absolute)) break;
-          directories.set(absolute, "worktree");
-          directory = path.dirname(directory);
-        }
+      ]).pipe(
+        Effect.tapError((cause) =>
+          warnOnce("VCS repository watcher could not list files; watching refs only", { cause }),
+        ),
+        Effect.option,
+      );
+      const worktreeDirectories =
+        files._tag === "Some"
+          ? worktreeDirectoriesFromFiles(path, topLevel, files.value, MAX_WORKTREE_DIRECTORIES)
+          : null;
+      if (files._tag === "Some" && worktreeDirectories === null) {
+        yield* warnOnce("VCS repository watcher found too many directories; watching refs only", {
+          maxDirectories: MAX_WORKTREE_DIRECTORIES,
+        });
       }
+      const directories = new Map<string, WatchedDirectoryKind>(
+        [...(worktreeDirectories ?? [topLevel])].map((directory) => [directory, "worktree"]),
+      );
       directories.set(gitDir, "gitDir");
       if (commonDir !== gitDir) directories.set(commonDir, "commonDir");
       for (const refsRoot of ["refs/heads", "refs/remotes"]) {
@@ -213,7 +260,7 @@ export const make = Effect.gen(function* () {
     ) => {
       if (filename === null || !isStatusRelevantChange(kind, path.basename(filename))) return;
       const absolute = path.join(directory, filename);
-      pending.paths.add(absolute);
+      pending.changed = true;
       if (kind !== "worktree" && path.basename(filename) !== "index") pending.refsChanged = true;
       if (eventType === "rename" && kind !== "gitDir") {
         if (watched.has(absolute)) pending.resync = true;
@@ -231,16 +278,7 @@ export const make = Effect.gen(function* () {
         // A directory removed since listing, or an exhausted inotify limit (ENOSPC). The
         // rest keep working, and focus/turn-end refreshes still cover the gap.
         Effect.tapError((cause) =>
-          Ref.getAndSet(failureLoggedRef, true).pipe(
-            Effect.flatMap((logged) =>
-              logged
-                ? Effect.void
-                : Effect.logWarning("VCS repository watcher could not watch a directory", {
-                    cwdLength: cwd.length,
-                    cause,
-                  }),
-            ),
-          ),
+          warnOnce("VCS repository watcher could not watch a directory", { cause }),
         ),
         Effect.option,
       );
@@ -255,14 +293,13 @@ export const make = Effect.gen(function* () {
 
     const syncDirectories = syncLock.withPermits(1)(
       Effect.gen(function* () {
-        const desired = yield* listDirectories.pipe(Effect.option);
-        if (desired._tag === "None") return;
+        const desired = yield* listDirectories;
         for (const [directory, watcher] of watched) {
-          if (desired.value.has(directory)) continue;
+          if (desired.has(directory)) continue;
           watcher.close();
           watched.delete(directory);
         }
-        for (const [directory, kind] of desired.value) {
+        for (const [directory, kind] of desired) {
           if (!watched.has(directory)) yield* openWatch(directory, kind);
         }
       }),
@@ -272,7 +309,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const batch = pending;
         pending = emptyPending();
-        if (batch.paths.size === 0) return;
+        if (!batch.changed) return;
         let resync = batch.resync;
         for (const renamed of batch.renamed) {
           if (resync) break;
@@ -280,7 +317,7 @@ export const make = Effect.gen(function* () {
           resync = info._tag === "Some" && info.value.type === "Directory";
         }
         if (resync) yield* syncDirectories;
-        yield* onChange({ paths: [...batch.paths], refsChanged: batch.refsChanged });
+        yield* onChange({ refsChanged: batch.refsChanged });
       }),
       VCS_REPOSITORY_CHANGE_DELAY,
     );
@@ -288,39 +325,14 @@ export const make = Effect.gen(function* () {
     yield* syncDirectories;
   });
 
+  const sessions = yield* RcMap.make({
+    lookup: (key: SessionKey) => startSession(key.cwd, key.onChange),
+  });
+
   const watch: VcsRepositoryWatcherShape["watch"] = Effect.fn("VcsRepositoryWatcher.watch")(
     function* (cwd, onChange) {
-      yield* SynchronizedRef.updateEffect(activeRef, (active) => {
-        const existing = active.get(cwd);
-        if (existing) {
-          return Effect.succeed(
-            new Map(active).set(cwd, { ...existing, retainers: existing.retainers + 1 }),
-          );
-        }
-        return Effect.gen(function* () {
-          const scope = yield* Scope.fork(serviceScope);
-          yield* startSession(cwd, onChange).pipe(Scope.provide(scope));
-          return new Map(active).set(cwd, { scope, retainers: 1 });
-        });
-      });
-      yield* Effect.addFinalizer(() =>
-        SynchronizedRef.updateEffect(activeRef, (active) => {
-          const existing = active.get(cwd);
-          if (!existing) return Effect.succeed(active);
-          if (existing.retainers > 1) {
-            return Effect.succeed(
-              new Map(active).set(cwd, { ...existing, retainers: existing.retainers - 1 }),
-            );
-          }
-          const next = new Map(active);
-          next.delete(cwd);
-          return Scope.close(existing.scope, Exit.void).pipe(Effect.as(next));
-        }),
-      );
+      yield* RcMap.get(sessions, new SessionKey(cwd, onChange));
     },
-    // Callers may fork this; an interruption between starting a session and registering
-    // its finalizer would leak the session's watchers.
-    Effect.uninterruptible,
   );
 
   return { watch } satisfies VcsRepositoryWatcherShape;
