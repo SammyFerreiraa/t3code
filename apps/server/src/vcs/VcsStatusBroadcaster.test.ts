@@ -513,7 +513,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
-  it.effect("refreshes from repository changes only while a status stream is open", () => {
+  it.effect("refreshes from repository changes only while an active status stream is open", () => {
     let activeWatches = 0;
     let onChange: Parameters<VcsRepositoryWatcher.VcsRepositoryWatcherShape["watch"]>[1] | null =
       null;
@@ -547,13 +547,22 @@ describe("VcsStatusBroadcaster", () => {
       watching = yield* Deferred.make<void>();
       assert.equal(activeWatches, 0);
 
-      const events = yield* Queue.unbounded<VcsStatusStreamEvent>();
-      const scope = yield* Scope.make();
+      const passiveEvents = yield* Queue.unbounded<VcsStatusStreamEvent>();
       yield* Stream.runForEach(
         broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
-        (event) => Queue.offer(events, event),
+        (event) => Queue.offer(passiveEvents, event),
+      ).pipe(Effect.forkScoped);
+      assert.equal((yield* Queue.take(passiveEvents))._tag, "snapshot");
+      assert.equal(activeWatches, 0);
+
+      const events = yield* Queue.unbounded<VcsStatusStreamEvent>();
+      const scope = yield* Scope.make();
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) =>
+        Queue.offer(events, event),
       ).pipe(Effect.forkIn(scope));
       assert.equal((yield* Queue.take(events))._tag, "snapshot");
+      // The remote poller's first read, with a fetch.
+      assert.equal((yield* Queue.take(events))._tag, "remoteUpdated");
       yield* Deferred.await(watching);
       assert.equal(activeWatches, 1);
 
@@ -562,20 +571,20 @@ describe("VcsStatusBroadcaster", () => {
         headSha: "abc123",
         hasWorkingTreeChanges: true,
       };
-      yield* onChange!({ paths: ["/repo/a.txt"], refsChanged: false });
+      yield* onChange!({ refsChanged: false });
       assert.deepStrictEqual(yield* Queue.take(events), {
         _tag: "localUpdated",
         local: state.currentLocalStatus,
       });
-      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, []);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [true]);
 
       state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 1 };
-      yield* onChange!({ paths: ["/repo/.git/refs/heads/main"], refsChanged: true });
+      yield* onChange!({ refsChanged: true });
       assert.deepStrictEqual(yield* Queue.take(events), {
         _tag: "remoteUpdated",
         remote: state.currentRemoteStatus,
       });
-      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false]);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [true, false]);
 
       yield* Scope.close(scope, Exit.void);
       assert.equal(activeWatches, 0);

@@ -742,10 +742,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
-        // Forked: listing the repository's directories must not delay the first snapshot.
-        yield* repositoryWatcher
-          .watch(cwd, (change) => refreshAfterRepositoryChange(cwd, change))
-          .pipe(Effect.forkScoped);
+        // Passive observers (sidebar rows) still get these updates through the shared cache
+        // when the panel streams the same cwd. Forked: listing the repository's directories
+        // must not delay the first snapshot.
+        if (input.includeRemote !== false) {
+          yield* repositoryWatcher
+            .watch(cwd, (change) => refreshAfterRepositoryChange(cwd, change))
+            .pipe(Effect.forkScoped);
+        }
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
