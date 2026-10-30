@@ -117,18 +117,11 @@ export default function SourceControlPanel(props: {
         </span>
       </div>
       {panelState === "not-repo" ? (
-        <GitActionsControl
-          presentation="toolbar"
-          displayMode="panel"
-          gitCwd={gitCwd}
-          activeThreadRef={threadRef}
-        />
+        <GitActionsControl gitCwd={gitCwd} activeThreadRef={threadRef} />
       ) : (
         <>
           <CommitMessageBox threadRef={threadRef} disabled={!canWrite} />
           <GitActionsControl
-            presentation="toolbar"
-            displayMode="panel"
             gitCwd={gitCwd}
             activeThreadRef={threadRef}
             commitDraft={{
