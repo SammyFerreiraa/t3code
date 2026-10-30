@@ -138,6 +138,7 @@ describe("diffPanelStore", () => {
     expect(useDiffPanelStore.getState().byThreadKey["env:commit-thread"]).toEqual({
       kind: "commit",
       sha: "def5678",
+      baseRef: null,
       filePath: "src/other.ts",
       previousPath: "src/old.ts",
       revealRequestId: 2,

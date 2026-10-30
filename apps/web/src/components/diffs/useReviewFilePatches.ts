@@ -193,7 +193,7 @@ function reviewFileQueries({
                 request: {
                   cwd,
                   ...(baseRef ? { baseRef } : {}),
-                  ...(source.kind === "commit" && source.headRef ? { commit: source.headRef } : {}),
+                  ...(source.kind === "commit" ? { commitSha: source.id } : {}),
                   ignoreWhitespace,
                   file: {
                     path: file.path,
