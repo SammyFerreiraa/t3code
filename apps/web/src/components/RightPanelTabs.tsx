@@ -379,7 +379,7 @@ function RightPanelEmptyState(props: {
     {
       label: "Source Control",
       icon: GitBranch,
-      shortcut: "S",
+      shortcut: "G",
       available: props.sourceControlAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.sourceControl,
       onClick: props.onAddSourceControl,
@@ -1145,7 +1145,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     {
       label: "Source Control",
       icon: GitBranch,
-      shortcut: "S",
+      shortcut: "G",
       available: props.sourceControlAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
       onClick: props.onAddSourceControl,
