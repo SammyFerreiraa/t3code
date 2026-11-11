@@ -11,10 +11,16 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as RcMap from "effect/RcMap";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as VcsProcess from "./VcsProcess.ts";
+
+class VcsWatchDirectoryError extends Schema.TaggedError<VcsWatchDirectoryError>()(
+  "VcsWatchDirectoryError",
+  { directory: Schema.String, cause: Schema.Defect() },
+) {}
 
 const VCS_REPOSITORY_CHANGE_DELAY = Duration.millis(200);
 const MAX_LIST_FILES_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -270,11 +276,13 @@ export const make = Effect.gen(function* () {
     };
 
     const openWatch = Effect.fnUntraced(function* (directory: string, kind: WatchedDirectoryKind) {
-      const watcher = yield* Effect.try(() =>
-        watchDirectory(directory, (eventType, filename) =>
-          onEvent(directory, kind, eventType, filename),
-        ),
-      ).pipe(
+      const watcher = yield* Effect.try({
+        try: () =>
+          watchDirectory(directory, (eventType, filename) =>
+            onEvent(directory, kind, eventType, filename),
+          ),
+        catch: (cause) => new VcsWatchDirectoryError({ directory, cause }),
+      }).pipe(
         // A directory removed since listing, or an exhausted inotify limit (ENOSPC). The
         // rest keep working, and focus/turn-end refreshes still cover the gap.
         Effect.tapError((cause) =>
