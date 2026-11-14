@@ -182,12 +182,14 @@ function panel(activeSurface: RightPanelSurface) {
     onAddPullRequest: noop,
     onAddPullRequests: noop,
     onAddDevice: noop,
+    onAddSourceControl: noop,
     browserAvailable: true,
     terminalAvailable: true,
     diffAvailable: true,
     filesAvailable: true,
     pullRequestAvailable: true,
     pullRequestsAvailable: true,
+    sourceControlAvailable: false,
     deviceAvailable: true,
     children: (
       <div data-testid="surface-content">
