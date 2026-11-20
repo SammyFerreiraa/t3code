@@ -2873,11 +2873,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const staged = stagedStats.get(filePath) ?? NO_LINE_CHANGES;
         const unstaged = unstagedStats.get(filePath) ?? NO_LINE_CHANGES;
         const state = indexStates.get(filePath);
-        // Totals are the net HEAD-to-worktree change; a rename's original path has none.
-        const net = netStats.get(filePath) ?? {
-          insertions: staged.insertions + unstaged.insertions,
-          deletions: staged.deletions + unstaged.deletions,
-        };
+        // Totals are the net HEAD-to-worktree change; a staged edit reverted in the worktree has none.
+        const net = netStats.get(filePath) ?? NO_LINE_CHANGES;
         insertions += net.insertions;
         deletions += net.deletions;
         return {

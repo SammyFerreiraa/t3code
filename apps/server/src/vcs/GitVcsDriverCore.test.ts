@@ -4821,6 +4821,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "reverted.txt", "a\n");
+        yield* git(cwd, ["add", "reverted.txt"]);
+        yield* git(cwd, ["commit", "-m", "reverted"]);
+        yield* writeTextFile(cwd, "reverted.txt", "b\n");
+        yield* git(cwd, ["add", "reverted.txt"]);
+        yield* writeTextFile(cwd, "reverted.txt", "a\n");
         yield* writeTextFile(cwd, "staged.txt", "one\n");
         yield* writeTextFile(cwd, "README.md", "# test\nstaged\n");
         yield* git(cwd, ["add", "staged.txt", "README.md"]);
@@ -4838,6 +4844,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             unstaged: { insertions: 2, deletions: 0 },
           },
           {
+            path: "reverted.txt",
+            insertions: 0,
+            deletions: 0,
+            staged: { insertions: 1, deletions: 1 },
+            unstaged: { insertions: 1, deletions: 1 },
+          },
+          {
             path: "staged.txt",
             insertions: 1,
             deletions: 0,
@@ -4845,6 +4858,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           },
         ]);
         assert.equal(status.workingTree.insertions, 4);
+        assert.equal(status.workingTree.deletions, 0);
       }),
     );
 
