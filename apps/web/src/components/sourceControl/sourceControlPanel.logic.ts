@@ -1,6 +1,10 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { changeRequestTerminologyFor } from "@t3tools/client-runtime/state/vcs";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { GitQuickAction } from "../GitActionsControl.logic";
 
 type ChangedFile = VcsStatusResult["workingTree"]["files"][number];
@@ -57,8 +61,6 @@ export function resolveSourceControlSections(
   return sections;
 }
 
-const BEHIND_PUSH_REASON = "Branch is behind upstream. Pull/rebase before pushing.";
-
 /**
  * The header's quick action offers to commit and push on a branch that is behind, which its own
  * Push item refuses. The tab's menu follows that refusal, so its main button falls back to what
@@ -68,6 +70,7 @@ const BEHIND_PUSH_REASON = "Branch is behind upstream. Pull/rebase before pushin
 export function resolveSourceControlQuickAction(
   quickAction: GitQuickAction,
   status: VcsStatusResult | null,
+  resolve: MessageResolver = m,
 ): GitQuickAction {
   if (
     status !== null &&
@@ -75,13 +78,18 @@ export function resolveSourceControlQuickAction(
     quickAction.kind === "run_action" &&
     (quickAction.action === "commit_push" || quickAction.action === "commit_push_pr")
   ) {
-    return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+    return {
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    };
   }
   return quickAction;
 }
 
 /** A git error as the tab shows it: the explanation, without the service name and the path. */
-export function describeSourceControlError(error: unknown): string {
+export function describeSourceControlError(error: unknown, resolve: MessageResolver = m): string {
   if (
     typeof error === "object" &&
     error !== null &&
@@ -91,7 +99,7 @@ export function describeSourceControlError(error: unknown): string {
   ) {
     return error.detail;
   }
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, resolve) ?? resolve(msg("An error occurred."));
 }
 
 export type SourceControlMenuExtraId =
@@ -118,102 +126,125 @@ export interface SourceControlMenuExtra {
 export function resolveSourceControlMenuExtras(
   status: VcsStatusResult,
   isBusy: boolean,
+  resolve: MessageResolver = m,
 ): SourceControlMenuExtra[] {
   const terminology = changeRequestTerminologyFor(status);
-  const busy = isBusy ? "Git action in progress." : null;
+  const busy = isBusy ? resolve(msg("Git action in progress.")) : null;
   const detached =
-    status.refName === null ? "Detached HEAD: check out a branch before pushing." : null;
+    status.refName === null
+      ? resolve(msg("Detached HEAD: check out a branch before pushing."))
+      : null;
   const isBehind = status.behindCount > 0;
   const isDiverged = status.aheadCount > 0 && isBehind;
   const canReachRemote = status.hasUpstream || status.hasPrimaryRemote;
   const clean = !status.hasWorkingTreeChanges
-    ? "Worktree is clean. Make changes before committing."
+    ? resolve(msg("Worktree is clean. Make changes before committing."))
     : null;
-  const noRemote = !canReachRemote ? 'Add an "origin" remote before pushing.' : null;
-  const noUpstream = !status.hasUpstream ? "Publish the branch before syncing." : null;
+  const noRemote = !canReachRemote ? resolve(msg('Add an "origin" remote before pushing.')) : null;
+  const noUpstream = !status.hasUpstream
+    ? resolve(msg("Publish the branch before syncing."))
+    : null;
   const divergedReason = isDiverged
-    ? "Branch has diverged from upstream. Rebase/merge first."
+    ? resolve(msg("Branch has diverged from upstream. Rebase/merge first."))
     : null;
 
   const commitReason =
-    busy ?? detached ?? clean ?? noRemote ?? (isBehind ? BEHIND_PUSH_REASON : null);
+    busy ??
+    detached ??
+    clean ??
+    noRemote ??
+    (isBehind ? resolve(msg("Branch is behind upstream. Pull/rebase before pushing.")) : null);
 
   const extras: SourceControlMenuExtra[] = [
-    { id: "commit_push", label: "Commit & push", disabledReason: commitReason },
+    {
+      id: "commit_push",
+      label: resolve(msg("Commit & push")),
+      disabledReason: commitReason,
+    },
   ];
   // The header commits straight to the default ref there, so a PR from it makes no sense.
   if (status.pr?.state !== "open" && !status.isDefaultRef) {
     extras.push({
       id: "commit_push_pr",
-      label: `Commit, push & ${terminology.shortLabel}`,
+      label: resolve(msg("Commit, push & {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabledReason: commitReason,
     });
   }
   extras.push(
     {
       id: "commit_sync",
-      label: "Commit & sync",
+      label: resolve(msg("Commit & sync")),
       // Committing on top of a behind branch diverges it, so the sync's pull could only fail.
       disabledReason:
         busy ??
         detached ??
         clean ??
         noUpstream ??
-        (isBehind ? "Branch is behind upstream. Pull before committing and syncing." : null),
+        (isBehind
+          ? resolve(msg("Branch is behind upstream. Pull before committing and syncing."))
+          : null),
     },
     {
       id: "force_push",
-      label: "Force push",
+      label: resolve(msg("Force push")),
       disabledReason:
         busy ??
         detached ??
         (status.isDefaultRef
-          ? "Force push is blocked on the default branch."
+          ? resolve(msg("Force push is blocked on the default branch."))
           : !status.hasUpstream
-            ? "Publish the branch before force pushing."
+            ? resolve(msg("Publish the branch before force pushing."))
             : status.aheadCount === 0 && !isBehind
-              ? "Branch already matches its upstream."
+              ? resolve(msg("Branch already matches its upstream."))
               : null),
     },
     {
       id: "pull",
-      label: "Pull",
+      label: resolve(msg("Pull")),
       disabledReason:
         busy ??
         (!status.hasUpstream
-          ? "This branch has no upstream to pull from."
-          : (divergedReason ?? (!isBehind ? "Branch is not behind upstream." : null))),
+          ? resolve(msg("This branch has no upstream to pull from."))
+          : (divergedReason ??
+            (!isBehind ? resolve(msg("Branch is not behind upstream.")) : null))),
     },
-    { id: "sync", label: "Sync", disabledReason: busy ?? detached ?? noUpstream ?? divergedReason },
+    {
+      id: "sync",
+      label: resolve(msg("Sync")),
+      disabledReason: busy ?? detached ?? noUpstream ?? divergedReason,
+    },
     {
       id: "rebase",
-      label: `Rebase from ${status.defaultRef ?? "default branch"}`,
+      label: resolve(
+        msg("Rebase from {base}", { base: status.defaultRef ?? resolve(msg("default branch")) }),
+      ),
       disabledReason:
         busy ??
         detached ??
         (status.isDefaultRef
-          ? "Already on the default branch."
+          ? resolve(msg("Already on the default branch."))
           : !status.hasPrimaryRemote
-            ? "Add a remote to rebase from its default branch."
+            ? resolve(msg("Add a remote to rebase from its default branch."))
             : status.hasWorkingTreeChanges
-              ? "Commit or stash changes before rebasing."
+              ? resolve(msg("Commit or stash changes before rebasing."))
               : null),
     },
     {
       id: "fetch",
-      label: "Fetch",
-      disabledReason: busy ?? (!canReachRemote ? "Add a remote before fetching." : null),
+      label: resolve(msg("Fetch")),
+      disabledReason:
+        busy ?? (!canReachRemote ? resolve(msg("Add a remote before fetching.")) : null),
     },
     {
       id: "publish_branch",
-      label: "Publish branch",
+      label: resolve(msg("Publish branch")),
       disabledReason:
         busy ??
         detached ??
         (status.hasUpstream
-          ? "Branch is already published."
+          ? resolve(msg("Branch is already published."))
           : !status.hasPrimaryRemote
-            ? 'Add an "origin" remote before publishing.'
+            ? resolve(msg('Add an "origin" remote before publishing.'))
             : null),
     },
   );
